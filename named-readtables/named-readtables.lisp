@@ -78,7 +78,7 @@ they appear."
   (flet ((process-option (option var)
            (destructure-case option
              ((:merge &rest readtable-designators)
-	      `(setf ,var (merge-readtables ,var ,@readtable-designators)))
+	      `(merge-readtables-into ,var ,@readtable-designators))
              ((:dispatch-macro-char disp-char sub-char function)
               `(set-dispatch-macro-character ,disp-char ,sub-char ,function ,var))
              ((:macro-char char function &optional non-terminating-p)
@@ -119,7 +119,7 @@ be found."
   (check-type string-designator string-designator)
   `(eval-when (:compile-toplevel :load-toplevel :execute)
      (setf *readtable* (ensure-readtable ,string-designator))))
-
+
 (defun make-readtable (name &key merge)
   "Makes and returns a new readtable under the specified NAME. The
 keyarg :MERGE takes a list of named-readtable-designators and specifies
@@ -134,7 +134,7 @@ the :STANDARD readtable is used instead."
 	  ((and (find-readtable name)
 		(cerror "Overwrite existing readtable."
 			"A readtable named ~S already exists." name)))
-	  (t (let ((result (apply #'merge-readtables
+	  (t (let ((result (apply #'merge-readtables-into
 				  ;; The first readtable specified in the :merge list is
 				  ;; taken as the basis for all subsequent (destructive!)
 				  ;; modifications (and hence it's copied.)
@@ -160,27 +160,36 @@ already registered under the new name, an error is raised."
     (%register-readtable string-designator read-table)
     read-table))
 
-
-;;; FIXME: This is completely not working as it's supposed to be. I
-;;; assumed semantics of CL:COPY-READTABLE that don't exist.
-(defun merge-readtables (result-table &rest named-readtable-designators)
+(defun merge-readtables-into (result-table &rest named-readtable-designators)
   "Copy the contents of each readtable in NAMED-READTABLE-DESIGNATORS,
 in turn, into RESULT-TABLE.  Because the readtables are merged in
 turn, macro definitions in readtables later in the list will overwrite
 definitions in readtables listed earlier.  Notice that the /readtable
 case/ is also subject of the merge operation."
-  (setf result-table (ensure-readtable result-table))
-  (dolist (table (mapcar #'ensure-readtable named-readtable-designators))
-    (setf result-table (copy-readtable table result-table)))
-  result-table)
+  (flet ((merge-into (rt1 rt2)
+	   (%with-readtable-iterator (rt2-iter rt2)
+	     (loop
+	      (multiple-value-bind (more? char reader-fn disp? table) (rt2-iter)
+		(unless more? (return))
+		(unless (standard-macro-char-p char rt2)
+		  (let ((non-terminating-p (nth-value 1 (get-macro-character char rt2))))
+		    (set-macro-character char reader-fn non-terminating-p rt1)))
+		(when disp?
+		  (loop for (subchar . subfn) in table do
+			(unless (standard-dispatch-macro-char-p char subchar rt2)
+			  (set-dispatch-macro-character char subchar subfn rt1)))))))
+	   rt1))
+    (setf result-table (ensure-readtable result-table))
+    (dolist (table (mapcar #'ensure-readtable named-readtable-designators))
+      (merge-into result-table table))
+    result-table))
 
 (defun list-all-named-readtables ()
   "Returns a list of all registered readtables. The returned list is
 guaranteed to be fresh, but may contain duplicates."
   (mapcar #'ensure-readtable (%list-all-readtable-names)))
 
-
-
+
 (deftype string-designator ()
   `(or string symbol character))
 
@@ -210,7 +219,20 @@ guaranteed to be fresh, but may contain duplicates."
   ;;; is out of scope of this library, though. So we just threaten
   ;;; with nasal demons.
   ;;;
-  (defvar *standard-readtable* (copy-readtable nil)))
+  (defvar *standard-readtable* (%standard-readtable)))
+
+(defun standard-macro-char-p (char rt)
+  (multiple-value-bind (rt-fn rt-flag) (get-macro-character char rt)
+    (multiple-value-bind (std-fn std-flag) (get-macro-character char *standard-readtable*)
+      (and (eq rt-fn std-fn)
+	   (eq rt-flag std-flag)))))
+
+(defun standard-dispatch-macro-char-p (disp-char sub-char rt)
+  (flet ((non-terminating-p (ch rt) (nth-value 1 (get-macro-character ch rt))))
+    (and (eq (non-terminating-p disp-char rt)
+	     (non-terminating-p disp-char *standard-readtable*))
+	 (eq (get-dispatch-macro-character disp-char sub-char rt)
+	     (get-dispatch-macro-character disp-char sub-char *standard-readtable*)))))
 
 (defparameter *reserved-readtable-names* '(nil :standard :current))
 
@@ -256,8 +278,7 @@ is signalled."
 	   (error "The name ~S does not designate any readtable." designator))
 	  (t (setf (find-readtable designator) (ensure-readtable default))))))
 
-
-
+
 (defun register-readtable (string-designator read-table)
   "Associate READ-TABLE as the readtable associated with STRING-DESIGNATOR."
   (check-type string-designator string-designator)
@@ -334,7 +355,4 @@ NAMED-READTABLE-DESIGNATOR or NIL."
     (signal-suspicious-registration-warning name default))
   form)
 
-
-
-;;;;; Internal implementation
 

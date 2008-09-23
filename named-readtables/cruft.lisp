@@ -22,14 +22,61 @@
 	 (loop for name being each hash-value of *readtable-names*
 	       collect name)))
 
+;;;; Implementation-dependent cruft
+
+(eval-when (:compile-toplevel :execute)
+  (when (find-package "SB-READER")
+    (push :sbcl+sb-reader *features*)))
+
 (declaim (inline %standard-readtable))
 (defun %standard-readtable ()
-  #-sbcl (copy-readtable nil)
-  #+sbcl sb-reader:*standard-readtable*)
+  #-sbcl           (copy-readtable nil)
+  #-sbcl+sb-reader (copy-readtable nil)
+  #+sbcl+sb-reader sb-reader:*standard-readtable*)
 
-#+sbcl
+#+sbcl+sb-reader
 (defmacro %with-readtable-iterator ((name readtable) &body body)
   `(sb-reader:with-readtable-iterator (,name ,readtable) ,@body))
+
+#-sbcl+sb-reader
+(progn
+  (defun make-readtable-iterator (readtable)
+    (let ((char-macro-array (sb-impl::character-macro-array readtable))
+	  (char-macro-ht    (sb-impl::character-macro-hash-table readtable))
+	  (dispatch-tables  (sb-impl::dispatch-tables readtable))
+	  (char-code 0))
+      (with-hash-table-iterator (ht-iterator char-macro-ht)
+	(labels ((grovel1 ()		; grovel base macro characters
+		   (declare (optimize sb-c::merge-tail-calls))
+		   (if (>= char-code sb-int:base-char-code-limit)
+		       (grovel2)
+		       (let ((entry (svref char-macro-array char-code)))
+			 (setq char-code (1+ char-code))
+			 (if entry
+			     (values t (code-char (1- char-code)) entry nil nil)
+			     (grovel1)))))
+		 (grovel2 ()	     ; grovel unicode macro characters
+		   (multiple-value-bind (more? char reader-fn) (ht-iterator)
+		     (if (not more?)
+			 (grovel3)
+			 (values t char reader-fn nil nil))))
+		 (grovel3 ()	    ; grovel dispatch macro characters
+		   (if (null dispatch-tables)
+		       (values nil nil nil nil nil)
+		       (let* ((disp-ch (caar dispatch-tables))
+			      (disp-ht (cdar dispatch-tables))
+			      (disp-fn (get-macro-character disp-ch readtable))
+			      (sub-char-alist))
+			 (setq dispatch-tables (cdr dispatch-tables))
+			 (maphash (lambda (k v) (push (cons k v) sub-char-alist)) disp-ht)
+			 (values t disp-ch disp-fn t sub-char-alist)))))
+	  #'grovel1))))
+
+  (defmacro %with-readtable-iterator ((name readtable) &body body)
+    (let ((it (gensym)))
+      `(let ((,it (make-readtable-iterator ,readtable)))
+	 (macrolet ((,name () `(funcall ,',it)))
+	   ,@body)))))
 
 #-allegro
 (progn

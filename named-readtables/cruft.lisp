@@ -22,6 +22,15 @@
 	 (loop for name being each hash-value of *readtable-names*
 	       collect name)))
 
+(declaim (inline %standard-readtable))
+(defun %standard-readtable ()
+  #-sbcl (copy-readtable nil)
+  #+sbcl sb-reader:*standard-readtable*)
+
+#+sbcl
+(defmacro %with-readtable-iterator ((name readtable) &body body)
+  `(sb-reader:with-readtable-iterator (,name ,readtable) ,@body))
+
 #-allegro
 (progn
   (defvar *named-readtables* (make-package (gensym "READTABLES+")))

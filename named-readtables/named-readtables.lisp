@@ -46,25 +46,25 @@ Or, if a readtable is already registered under that name, redefines that one.
 
 The readtable can be populated using the OPTIONS &rest argument, as follows:
 
-  (:merge &rest readtable-designators) -- merge the readtables designated into
-      the new readtable, using merge-readtables.  It is mandatory to supply 
-      at least one :merge option naming a readtable to incorporate.
+  (:MERGE &REST READTABLE-DESIGNATORS) -- merge the readtables designated into
+      the new readtable, using MERGE-READTABLES-INTO.  It is mandatory to supply 
+      at least one :MERGE option naming a readtable to incorporate.
  
       Defreadtable accepts some special readtable designators, including
-      NIL or :standard for the standard readtable and :current for the current
+      NIL or :STANDARD for the standard readtable and :CURRENT for the current
       readtable, as well as the names of programmer-defined readtables.
 
-      Note that the process of merging readtables is NOT commutative, so that 
+      Note that the process of merging readtables is _not_ commutative, so that 
       macros in later entries will overwrite earlier ones, left to right in a single
-      :merge directive, and one after another across multiple :merge directives.
+      :MERGE directive, and one after another across multiple :MERGE directives.
 
-  (:dispatch-macro-char macro-char sub-char function) -- define a new
+  (:DISPATCH-MACRO-CHAR MACRO-CHAR SUB-CHAR FUNCTION) -- define a new
       dispatch macro character in the readtable, per SET-DISPATCH-MACRO-CHARACTER.
 
-  (:macro-char macro-char function &optional non-terminating-p) -- define a 
+  (:MACRO-CHAR MACRO-CHAR FUNCTION &OPTIONAL NON-TERMINATING-P) -- define a 
       new macro character in the readtable, per SET-MACRO-CHARACTER.
 
-  (:case case-mode) -- defines the /case sensititivy mode/ of the resulting
+  (:CASE CASE-MODE) -- defines the /case sensititivy mode/ of the resulting
       readtable.
 
   Any number of option clauses may appear.  The :merge directives are evaluated first,

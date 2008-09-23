@@ -4,6 +4,7 @@
   :author "Tobias C. Rittweiler <trittweiler@common-lisp.net>"
   :version "1.0"
   :licence "BSD"
+  :serial t
   :components
   ((:file "package")
    (:file "destructure-case")

@@ -1,0 +1,340 @@
+
+;;; Copyright (c) 2007, Tobias C. Rittweiler <tcr@freebits.de>,
+;;;                     Robert P. Goldman <rpgoldman@sift.info> and SIFT, LLC
+;;; All rights reserved.
+;;;
+;;; Redistribution and use in source and binary forms, with or without
+;;; modification, are permitted provided that the following conditions are met:
+;;;     * Redistributions of source code must retain the above copyright
+;;;       notice, this list of conditions and the following disclaimer.
+;;;     * Redistributions in binary form must reproduce the above copyright
+;;;       notice, this list of conditions and the following disclaimer in the
+;;;       documentation and/or other materials provided with the distribution.
+;;;     * Neither the names of Tobias C. Rittweiler, Robert P. Goldman, SIFT, LLC nor the
+;;;       names of its contributors may be used to endorse or promote products
+;;;       derived from this software without specific prior written permission.
+;;;
+;;; THIS SOFTWARE IS PROVIDED BY Tobias C. Rittweiler, Robert
+;;; P. Goldman and SIFT, LLC ``AS IS'' AND ANY EXPRESS OR IMPLIED
+;;; WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
+;;; OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+;;; DISCLAIMED. IN NO EVENT SHALL Tobias C. Rittweiler, Robert
+;;; P. Goldman or SIFT, LLC BE LIABLE FOR ANY DIRECT, INDIRECT,
+;;; INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+;;; (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+;;; SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+;;; HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+;;; CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
+;;; OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
+;;; EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+(in-package :editor-hints.named-readtables)
+
+;;;
+;;;  ``This is enough of a foothold to implement a more elaborate
+;;;    facility for using readtables in a localized way.''
+;;;
+;;;                               (X3J13 Cleanup Issue IN-SYNTAX)
+;;;
+
+
+;;;;;; DEFREADTABLE &c.
+
+(defmacro defreadtable (string-designator &rest options)
+  "Define a new named readtable, whose name is given by STRING-DESIGNATOR.
+Or, if a readtable is already registered under that name, redefines that one.
+
+The readtable can be populated using the OPTIONS &rest argument, as follows:
+
+  (:merge &rest readtable-designators) -- merge the readtables designated into
+      the new readtable, using merge-readtables.  It is mandatory to supply 
+      at least one :merge option naming a readtable to incorporate.
+ 
+      Defreadtable accepts some special readtable designators, including
+      NIL or :standard for the standard readtable and :current for the current
+      readtable, as well as the names of programmer-defined readtables.
+
+      Note that the process of merging readtables is NOT commutative, so that 
+      macros in later entries will overwrite earlier ones, left to right in a single
+      :merge directive, and one after another across multiple :merge directives.
+
+  (:dispatch-macro-char macro-char sub-char function) -- define a new
+      dispatch macro character in the readtable, per SET-DISPATCH-MACRO-CHARACTER.
+
+  (:macro-char macro-char function &optional non-terminating-p) -- define a 
+      new macro character in the readtable, per SET-MACRO-CHARACTER.
+
+  (:case case-mode) -- defines the /case sensititivy mode/ of the resulting
+      readtable.
+
+  Any number of option clauses may appear.  The :merge directives are evaluated first,
+then the :case directives are evaluated in the order they appear. At last the local
+macro definitions in :dispatch-macro-char and :macro-char are evaluated in the order
+they appear."
+  (check-type string-designator string-designator)
+  (when (reserved-readtable-name-p string-designator)
+    (error "~A is the designator for a predefined readtable. ~
+            Not acceptable as a user-specified readtable name." string-designator))
+  (flet ((process-option (option var)
+           (destructure-case option
+             ((:merge &rest readtable-designators)
+	      `(setf ,var (merge-readtables ,var ,@readtable-designators)))
+             ((:dispatch-macro-char disp-char sub-char function)
+              `(set-dispatch-macro-character ,disp-char ,sub-char ,function ,var))
+             ((:macro-char char function &optional non-terminating-p)
+              `(set-macro-character ,char ,function ,non-terminating-p ,var))
+	     ((:case mode)
+	      `(setf (readtable-case ,var) ,mode))))
+	 (member-of (&rest rest) #'(lambda (x) (member x rest))))
+    (let* ((merge-clauses (remove-if-not (member-of :merge) options :key #'first))
+	   (case-clauses  (remove-if-not (member-of :case)  options :key #'first))
+	   (macro-clauses (remove-if-not (member-of :macro-char
+						    :dispatch-macro-char) options
+					 :key #'first))
+	   (other-clauses (set-difference options (append merge-clauses case-clauses macro-clauses))))
+      (cond ((null merge-clauses)
+	     (error "Not at least one (:merge ...) clause given in DEFREADTABLE form."))
+	    ((not (null other-clauses))
+	     (error "Bogus DEFREADTABLE clauses: ~{~A~^, ~}" other-clauses))
+	    (t
+	     `(eval-when (:compile-toplevel :load-toplevel :execute)
+		;; The (FIND-READTABLE ...) is important for proper redefinition semantics.
+		(let ((read-table (or (find-readtable ,string-designator)
+				      (make-readtable ,string-designator
+						      :merge ',(rest (first merge-clauses))))))
+		  ;; We traverse all merge-clauses (i.e. not just (REST MERGE-CLAUSES))
+		  ;; for the case when (FIND-READTABLE ...) was non-NIL.
+		  ,@(loop for option in merge-clauses
+			  collect (process-option option 'read-table))
+		  ,@(loop for option in case-clauses
+			  collect (process-option option 'read-table))
+		  ,@(loop for option in macro-clauses
+			  collect (process-option option 'read-table))
+		  read-table)))))))
+
+(defmacro in-readtable (string-designator)
+  "Bind the *readtable* to the readtable referred to by
+STRING-DESIGNATOR, raising an error if no such readtable can
+be found."
+  (check-type string-designator string-designator)
+  `(eval-when (:compile-toplevel :load-toplevel :execute)
+     (setf *readtable* (ensure-readtable ,string-designator))))
+
+(defun make-readtable (name &key merge)
+  "Makes and returns a new readtable under the specified NAME. The
+keyarg :MERGE takes a list of named-readtable-designators and specifies
+the readtables the new readtable is created from. (See the :MERGE
+clauses of DEFREADTABLE for details.) If :MERGE wasn't given (or NIL),
+the :STANDARD readtable is used instead."
+  (let ((merge-list (or merge '(:standard))))
+    (check-type merge-list list)
+    (cond ((reserved-readtable-name-p name)
+	   (error "~A is the designator for a predefined readtable. ~
+                   Not acceptable as a user-specified readtable name." name))
+	  ((and (find-readtable name)
+		(cerror "Overwrite existing readtable."
+			"A readtable named ~S already exists." name)))
+	  (t (let ((result (apply #'merge-readtables
+				  ;; The first readtable specified in the :merge list is
+				  ;; taken as the basis for all subsequent (destructive!)
+				  ;; modifications (and hence it's copied.)
+				  (copy-readtable (ensure-readtable (first merge-list)))
+				  (rest merge-list))))
+	       (register-readtable name result))))))
+
+(defun rename-readtable (named-readtable-designator string-designator)
+  "Replaces the associated name of the readtable designated by
+NAMED-READTABLE-DESIGNATOR with STRING-DESIGNATOR. If a readtable is
+already registered under the new name, an error is raised."
+  (check-type named-readtable-designator named-readtable-designator)
+  (check-type string-designator string-designator)
+  (when (find-readtable string-designator)
+    (error "A readtable named ~S already exists." string-designator))
+  (let* ((read-table (ensure-readtable named-readtable-designator))
+	 (read-table-name (readtable-name read-table)))
+    ;; We use the internal functions directly to omit repeated
+    ;; type-checking.
+    (%unregister-readtable-name read-table)
+    (%unregister-readtable read-table-name)
+    (%register-readtable-name string-designator read-table)
+    (%register-readtable string-designator read-table)
+    read-table))
+
+
+;;; FIXME: This is completely not working as it's supposed to be. I
+;;; assumed semantics of CL:COPY-READTABLE that don't exist.
+(defun merge-readtables (result-table &rest named-readtable-designators)
+  "Copy the contents of each readtable in NAMED-READTABLE-DESIGNATORS,
+in turn, into RESULT-TABLE.  Because the readtables are merged in
+turn, macro definitions in readtables later in the list will overwrite
+definitions in readtables listed earlier.  Notice that the /readtable
+case/ is also subject of the merge operation."
+  (setf result-table (ensure-readtable result-table))
+  (dolist (table (mapcar #'ensure-readtable named-readtable-designators))
+    (setf result-table (copy-readtable table result-table)))
+  result-table)
+
+(defun list-all-named-readtables ()
+  "Returns a list of all registered readtables. The returned list is
+guaranteed to be fresh, but may contain duplicates."
+  (mapcar #'ensure-readtable (%list-all-readtable-names)))
+
+
+
+(deftype string-designator ()
+  `(or string symbol character))
+
+(deftype readtable-designator ()
+  `(or null readtable))
+
+(deftype named-readtable-designator ()
+  `(or readtable-designator string-designator))
+
+(eval-when (:compile-toplevel :load-toplevel :execute)
+  ;;; Although there is no way to get at the standard readtable in
+  ;;; Common Lisp (cf. /standard readtable/, CLHS glossary), we make
+  ;;; up the perception of its existence by interning a copy of it.
+  ;;;
+  ;;; We do this for reverse lookup (cf. READTABLE-NAME), i.e. for
+  ;;;
+  ;;;   (equal (readtable-name (find-readtable :standard)) "STANDARD")
+  ;;;
+  ;;; holding true.
+  ;;;
+  ;;; We, however, inherit the restriction that the :STANDARD
+  ;;; readtable _must not be modified_ (cf. CLHS 2.1.1.2), although it'd
+  ;;; technically be feasible (as *STANDARD-READTABLE* will contain a
+  ;;; mutable copy of the implementation-internal standard readtable.)
+  ;;; We cannot enforce this restriction without shadowing
+  ;;; CL:SET-MACRO-CHARACTER and CL:SET-DISPATCH-MACRO-FUNCTION which
+  ;;; is out of scope of this library, though. So we just threaten
+  ;;; with nasal demons.
+  ;;;
+  (defvar *standard-readtable* (copy-readtable nil)))
+
+(defparameter *reserved-readtable-names* '(nil :standard :current))
+
+(defun reserved-readtable-name-p (name)
+  (and (member (string name) *reserved-readtable-names*
+	       :test #'string= :key #'symbol-name)
+       t))
+
+;;; We must do reserved readtable lookup seperately, since we can't
+;;; integrate it fully into the registration scheme anyway because of
+;;; :CURRENT. So we just do it completely seperately.
+
+(defun find-reserved-readtable (reserved-name)
+  (cond ((string= reserved-name nil)       *standard-readtable*)
+	((string= reserved-name :standard) *standard-readtable*)
+	((string= reserved-name :current)  *readtable*)
+	(t (error "No such reserved readtable: ~S" reserved-name))))
+
+(defun find-readtable (named-readtable-designator)
+  "Looks for the readtable specified by NAMED-READTABLE-DESIGNATOR and 
+returns it if it is found. Returns NIL otherwise."
+  (check-type named-readtable-designator named-readtable-designator)
+  (symbol-macrolet ((designator named-readtable-designator))
+    (cond ((readtablep designator) designator)
+	  ((reserved-readtable-name-p designator)
+	   (find-reserved-readtable designator))
+	  ((%find-readtable-from-name designator)))))
+
+;;; FIXME: This doesn't take a NAMED-READTABLE-DESIGNATOR, but only a
+;;; STRING-DESIGNATOR. (When fixing, heed interplay with compiler
+;;; macros below.)
+(defsetf find-readtable register-readtable)
+
+(defun ensure-readtable (named-readtable-designator &optional (default nil default-p))
+  "Looks up the readtable specified by NAMED-READTABLE-DESIGNATOR and
+returns it if it is found.  If it is not found, it registers the
+readtable designated by DEFAULT under the name represented by
+NAMED-READTABLE-DESIGNATOR. If no default argument was given, an error
+is signalled."
+  (symbol-macrolet ((designator named-readtable-designator))
+    (cond ((find-readtable designator))
+	  ((not default-p)
+	   (error "The name ~S does not designate any readtable." designator))
+	  (t (setf (find-readtable designator) (ensure-readtable default))))))
+
+
+
+(defun register-readtable (string-designator read-table)
+  "Associate READ-TABLE as the readtable associated with STRING-DESIGNATOR."
+  (check-type string-designator string-designator)
+  (check-type read-table readtable)
+  (check-type string-designator (not (satisfies reserved-readtable-name-p)))
+  (%register-readtable-name string-designator read-table)
+  (%register-readtable string-designator read-table)
+  read-table)
+
+(defun unregister-readtable (named-readtable-designator)
+  "Remove the readtable association of NAMED-READTABLE-DESIGNATOR.
+Returns T if successfull, NIL otherwise."
+  (let* ((read-table (ensure-readtable named-readtable-designator))
+	 (read-table-name (readtable-name read-table)))
+    (if (not read-table-name)
+	nil
+	(prog1 t
+	  (check-type read-table-name (not (satisfies reserved-readtable-name-p)))
+	  (%unregister-readtable-name read-table)
+	  (%unregister-readtable read-table-name)))))
+
+(defun readtable-name (named-readtable-designator)
+  "Returns the name (as string) of the readtable designated by
+NAMED-READTABLE-DESIGNATOR or NIL."
+  (check-type named-readtable-designator named-readtable-designator)
+  (let ((read-table (ensure-readtable named-readtable-designator)))
+    (cond ((eq read-table *readtable*)          "CURRENT")
+	  ((eq read-table *standard-readtable*) "STANDARD")
+	  (t (%readtable-name read-table)))))
+
+
+;;;;; Compiler macros
+
+;;; Since the :STANDARD read-table is interned, and we can't enforce
+;;; its immutability, we signal a style-warning for suspicious uses
+;;; that may result in strange behaviour:
+
+;;; Modifying the standard readtable would, obviously, lead to a
+;;; propagation of this change to all places which use the :STANDARD
+;;; readtable (and thus rendering this readtable to be non-standard,
+;;; in fact.)
+
+(define-condition simple-style-warning (style-warning simple-warning)
+  ())
+
+(eval-when (:compile-toplevel :load-toplevel :execute)
+  (defun constant-standard-readtable-expression-p (thing)
+    (cond ((symbolp thing) (or (eq thing 'nil) (eq thing :standard)))
+	  ((consp thing)   (some (lambda (x) (equal thing x))
+				 '((find-readtable nil)
+				   (find-readtable :standard)
+				   (ensure-readtable nil)
+				   (ensure-readtable :standard))))
+	  (t nil))))
+
+(eval-when (:compile-toplevel :load-toplevel :execute)
+  (defun signal-suspicious-registration-warning (name-expr read-table-expr)
+    (warn 'simple-style-warning
+	  :format-control
+	  "Caution: ~<You're trying to register the :STANDARD readtable ~
+           under a new name ~S. As modification of the :STANDARD readtable ~
+           is not permitted, subsequent modification of ~S won't be ~
+           permitted either. You probably want to wrap COPY-READTABLE ~
+           around~@:>~%             ~S"
+	  :format-arguments `((,name-expr ,name-expr) ,read-table-expr))))
+
+(define-compiler-macro register-readtable (&whole form name read-table)
+  (when (constant-standard-readtable-expression-p read-table)
+    (signal-suspicious-registration-warning name read-table))
+  form)
+
+(define-compiler-macro ensure-readtable (&whole form name &optional (default nil default-p))
+  (when (and default-p (constant-standard-readtable-expression-p default))
+    (signal-suspicious-registration-warning name default))
+  form)
+
+
+
+;;;;; Internal implementation
+

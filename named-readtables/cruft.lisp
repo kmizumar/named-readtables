@@ -1,7 +1,7 @@
 
 (in-package :editor-hints.named-readtables)
 
-#-(or allegro sbcl clozure)
+#-(or sbcl clozure)
 (eval-when (:compile-toplevel)
   (warn "~A hasn't been ported to ~A; you're likely to get a compiler error" 
 	(package-name *package*) (lisp-implementation-type)))
@@ -36,17 +36,14 @@
 (declaim (inline %standard-readtable))
 (defun %standard-readtable ()
   #+sbcl+sb-reader sb-reader:*standard-readtable*
-  #+clozure ccl::%initial-readtable%
-  #-(or sbcl+sb-reader clozure)
-  (copy-readtable nil))
+  #-sbcl+sb-reader (copy-readtable nil))
 
 #+sbcl+sb-reader
 (defmacro %with-readtable-iterator ((name readtable) &body body)
   `(sb-reader:with-readtable-iterator (,name ,readtable) ,@body))
 
-#+(or (and sbcl (not sbcl+sb-reader)) clozure)
+#+(and sbcl (not sbcl+sb-reader))
 (progn
-  #+sbcl
   (defun make-readtable-iterator (readtable)
     (let ((char-macro-array (sb-impl::character-macro-array readtable))
 	  (char-macro-ht    (sb-impl::character-macro-hash-table readtable))
@@ -79,7 +76,13 @@
 			 (values t disp-ch disp-fn t sub-char-alist)))))
 	  #'grovel1))))
 
-  #+clozure
+  (defmacro %with-readtable-iterator ((name readtable) &body body)
+    (let ((it (gensym)))
+      `(let ((,it (make-readtable-iterator ,readtable)))
+	 (macrolet ((,name () `(funcall ,',it)))
+	   ,@body)))))
+#+clozure
+(progn
   (defun make-readtable-iterator (readtable)
     (let ((char-macro-alist (ccl::rdtab.alist readtable)))
       (lambda ()
@@ -95,6 +98,7 @@
       `(let ((,it (make-readtable-iterator ,readtable)))
 	 (macrolet ((,name () `(funcall ,',it)))
 	   ,@body)))))
+
 
 #-allegro
 (progn

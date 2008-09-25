@@ -30,16 +30,18 @@
 
 (declaim (inline %standard-readtable))
 (defun %standard-readtable ()
-  #-sbcl           (copy-readtable nil)
-  #-sbcl+sb-reader (copy-readtable nil)
-  #+sbcl+sb-reader sb-reader:*standard-readtable*)
+  #+sbcl+sb-reader sb-reader:*standard-readtable*
+  #+clozure ccl::%initial-readtable%
+  #-(or sbcl+sb-reader clozure)
+  (copy-readtable nil))
 
 #+sbcl+sb-reader
 (defmacro %with-readtable-iterator ((name readtable) &body body)
   `(sb-reader:with-readtable-iterator (,name ,readtable) ,@body))
 
-#-sbcl+sb-reader
+#+(or (and sbcl (not sbcl+sb-reader)) clozure)
 (progn
+  #+sbcl
   (defun make-readtable-iterator (readtable)
     (let ((char-macro-array (sb-impl::character-macro-array readtable))
 	  (char-macro-ht    (sb-impl::character-macro-hash-table readtable))
@@ -71,6 +73,17 @@
 			 (maphash (lambda (k v) (push (cons k v) sub-char-alist)) disp-ht)
 			 (values t disp-ch disp-fn t sub-char-alist)))))
 	  #'grovel1))))
+
+  #+clozure
+  (defun make-readtable-iterator (readtable)
+    (let ((char-macro-alist (ccl::rdtab.alist readtable)))
+      (lambda ()
+	(if char-macro-alist
+	    (destructuring-bind (char . defn) (pop char-macro-alist)
+	      (if (consp defn)
+		  (values t char (car defn) t (cdr defn))
+		  (values t char defn nil nil)))
+	    (values nil nil nil nil nil)))))
 
   (defmacro %with-readtable-iterator ((name readtable) &body body)
     (let ((it (gensym)))

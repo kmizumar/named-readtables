@@ -1,6 +1,11 @@
 
 (in-package :editor-hints.named-readtables)
 
+#-(or allegro sbcl clozure)
+(eval-when (:compile-toplevel)
+  (warn "~A hasn't been ported to ~A; you're likely to get a compiler error" 
+	(package-name *package*) (lisp-implementation-type)))
+
 (defvar *readtable-names* (make-hash-table :test 'eq))
 
 (declaim (inline %register-readtable-name))

@@ -40,7 +40,7 @@
 
 ;;;;;; DEFREADTABLE &c.
 
-(defmacro defreadtable (name &rest options)
+(defmacro defreadtable (name &body options)
   "Define a new named readtable, whose name is given by the symbol NAME.
 Or, if a readtable is already registered under that name, redefines that one.
 
@@ -82,7 +82,12 @@ they appear."
              ((:dispatch-macro-char disp-char sub-char function)
               `(set-dispatch-macro-character ,disp-char ,sub-char ,function ,var))
              ((:macro-char char function &optional non-terminating-p)
-              `(set-macro-character ,char ,function ,non-terminating-p ,var))
+	      (if (eq function :dispatch)
+		  ;; FIXME: This is not perfect as SBCL signals an
+		  ;; error on already existing dispatch macros. I sent
+		  ;; an appropriate patch upstream.
+		  `(make-dispatch-macro-character ,char ,non-terminating-p ,var)
+		  `(set-macro-character ,char ,function ,non-terminating-p ,var)))
 	     ((:case mode)
 	      `(setf (readtable-case ,var) ,mode))))
 	 (member-of (&rest rest) #'(lambda (x) (member x rest))))
@@ -109,7 +114,6 @@ they appear."
 					    ;; be used which is not necessarily what we want.
 					    :merge ',(rest (first merge-clauses)))))
 		  ;; We have to grovel all MERGE-CLAUSES for the redefinition case.
-		  
 		  ,@(loop for option in merge-clauses
 			  collect (process-option option 'read-table))
 		  ,@(loop for option in case-clauses

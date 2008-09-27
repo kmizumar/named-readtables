@@ -40,8 +40,8 @@
 
 ;;;;;; DEFREADTABLE &c.
 
-(defmacro defreadtable (string-designator &rest options)
-  "Define a new named readtable, whose name is given by STRING-DESIGNATOR.
+(defmacro defreadtable (name &rest options)
+  "Define a new named readtable, whose name is given by the symbol NAME.
 Or, if a readtable is already registered under that name, redefines that one.
 
 The readtable can be populated using the OPTIONS &rest argument, as follows:
@@ -71,10 +71,10 @@ The readtable can be populated using the OPTIONS &rest argument, as follows:
 then the :case directives are evaluated in the order they appear. At last the local
 macro definitions in :dispatch-macro-char and :macro-char are evaluated in the order
 they appear."
-  (check-type string-designator string-designator)
-  (when (reserved-readtable-name-p string-designator)
+  (check-type name symbol)
+  (when (reserved-readtable-name-p name)
     (error "~A is the designator for a predefined readtable. ~
-            Not acceptable as a user-specified readtable name." string-designator))
+            Not acceptable as a user-specified readtable name." name))
   (flet ((process-option (option var)
            (destructure-case option
              ((:merge &rest readtable-designators)
@@ -99,16 +99,17 @@ they appear."
 	    (t
 	     `(eval-when (:compile-toplevel :load-toplevel :execute)
 		;; The (FIND-READTABLE ...) is important for proper redefinition semantics.
-		(let ((read-table (find-readtable ,string-designator)))
+		(let ((read-table (find-readtable ',name)))
 		  (if read-table
-		      (simple-style-warn "redefining ~A in ~A" ,string-designator 'defreadtable)
+		      (simple-style-warn "redefining ~A in DEFREADTABLE" ',name)
 		      (setq read-table
-			    (make-readtable ,string-designator
+			    (make-readtable ',name
 					    ;; We have to provide an explicit :MERGE argument,
 					    ;; because otherwise the :STANDARD readtable would
 					    ;; be used which is not necessarily what we want.
 					    :merge ',(rest (first merge-clauses)))))
 		  ;; We have to grovel all MERGE-CLAUSES for the redefinition case.
+		  
 		  ,@(loop for option in merge-clauses
 			  collect (process-option option 'read-table))
 		  ,@(loop for option in case-clauses
@@ -117,13 +118,12 @@ they appear."
 			  collect (process-option option 'read-table))
 		  read-table)))))))
 
-(defmacro in-readtable (string-designator)
-  "Bind the *readtable* to the readtable referred to by
-STRING-DESIGNATOR, raising an error if no such readtable can
-be found."
-  (check-type string-designator string-designator)
+(defmacro in-readtable (name)
+  "Bind the *readtable* to the readtable referred to by NAME, raising
+an error if no such readtable can be found."
+  (check-type name symbol)
   `(eval-when (:compile-toplevel :load-toplevel :execute)
-     (setf *readtable* (ensure-readtable ,string-designator))))
+     (setf *readtable* (ensure-readtable ',name))))
 
 (defun make-readtable (name &key merge)
   "Makes and returns a new readtable under the specified NAME. The
@@ -147,22 +147,22 @@ the :STANDARD readtable is used instead."
 				  (rest merge-list))))
 	       (register-readtable name result))))))
 
-(defun rename-readtable (named-readtable-designator string-designator)
+(defun rename-readtable (named-readtable-designator new-name)
   "Replaces the associated name of the readtable designated by
-NAMED-READTABLE-DESIGNATOR with STRING-DESIGNATOR. If a readtable is
-already registered under the new name, an error is raised."
+NAMED-READTABLE-DESIGNATOR with NEW-NAME If a readtable is already
+registered under the new name, an error is raised."
   (check-type named-readtable-designator named-readtable-designator)
-  (check-type string-designator string-designator)
-  (when (find-readtable string-designator)
-    (error "A readtable named ~S already exists." string-designator))
+  (check-type new-name symbol)
+  (when (find-readtable new-name)
+    (error "A readtable named ~S already exists." new-name))
   (let* ((read-table (ensure-readtable named-readtable-designator))
 	 (read-table-name (readtable-name read-table)))
     ;; We use the internal functions directly to omit repeated
     ;; type-checking.
     (%unregister-readtable-name read-table)
     (%unregister-readtable read-table-name)
-    (%register-readtable-name string-designator read-table)
-    (%register-readtable string-designator read-table)
+    (%register-readtable-name new-name read-table)
+    (%register-readtable new-name read-table)
     read-table))
 
 (defun merge-readtables-into (result-table &rest named-readtable-designators)
@@ -195,14 +195,11 @@ guaranteed to be fresh, but may contain duplicates."
   (mapcar #'ensure-readtable (%list-all-readtable-names)))
 
 
-(deftype string-designator ()
-  `(or string symbol character))
-
 (deftype readtable-designator ()
   `(or null readtable))
 
 (deftype named-readtable-designator ()
-  `(or readtable-designator string-designator))
+  `(or readtable-designator symbol))
 
 ;;; Although there is no way to get at the standard readtable in
 ;;; Common Lisp (cf. /standard readtable/, CLHS glossary), we make
@@ -241,18 +238,16 @@ guaranteed to be fresh, but may contain duplicates."
 (defparameter *reserved-readtable-names* '(nil :standard :current))
 
 (defun reserved-readtable-name-p (name)
-  (and (member (string name) *reserved-readtable-names*
-	       :test #'string= :key #'symbol-name)
-       t))
+  (and (member name *reserved-readtable-names*) t))
 
 ;;; In principle, we could DEFREADTABLE :STANDARD. But we do reserved
 ;;; readtable lookup seperately, since we can't register a readtable
 ;;; for :CURRENT anyway.
 
 (defun find-reserved-readtable (reserved-name)
-  (cond ((string= reserved-name nil)       *standard-readtable*)
-	((string= reserved-name :standard) *standard-readtable*)
-	((string= reserved-name :current)  *readtable*)
+  (cond ((eq reserved-name nil)       *standard-readtable*)
+	((eq reserved-name :standard) *standard-readtable*)
+	((eq reserved-name :current)  *readtable*)
 	(t (error "No such reserved readtable: ~S" reserved-name))))
 
 (defun find-readtable (named-readtable-designator)
@@ -283,13 +278,13 @@ is signalled."
 	  (t (setf (find-readtable designator) (ensure-readtable default))))))
 
 
-(defun register-readtable (string-designator read-table)
-  "Associate READ-TABLE as the readtable associated with STRING-DESIGNATOR."
-  (check-type string-designator string-designator)
+(defun register-readtable (name read-table)
+  "Associate READ-TABLE as the readtable associated with NAME."
+  (check-type name symbol)
   (check-type read-table readtable)
-  (check-type string-designator (not (satisfies reserved-readtable-name-p)))
-  (%register-readtable-name string-designator read-table)
-  (%register-readtable string-designator read-table)
+  (check-type name (not (satisfies reserved-readtable-name-p)))
+  (%register-readtable-name name read-table)
+  (%register-readtable name read-table)
   read-table)
 
 (defun unregister-readtable (named-readtable-designator)
@@ -305,12 +300,12 @@ Returns T if successfull, NIL otherwise."
 	  (%unregister-readtable read-table-name)))))
 
 (defun readtable-name (named-readtable-designator)
-  "Returns the name (as string) of the readtable designated by
+  "Returns the name of the readtable designated by
 NAMED-READTABLE-DESIGNATOR or NIL."
   (check-type named-readtable-designator named-readtable-designator)
   (let ((read-table (ensure-readtable named-readtable-designator)))
-    (cond ((eq read-table *readtable*)          "CURRENT")
-	  ((eq read-table *standard-readtable*) "STANDARD")
+    (cond ((eq read-table *readtable*)          :current)
+	  ((eq read-table *standard-readtable*) :standard)
 	  (t (%readtable-name read-table)))))
 
 

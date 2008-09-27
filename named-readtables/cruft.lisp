@@ -9,9 +9,8 @@
 (defvar *readtable-names* (make-hash-table :test 'eq))
 
 (declaim (inline %register-readtable-name))
-(defun %register-readtable-name (string-designator read-table)
-  (setf (gethash read-table *readtable-names*)
-	(string string-designator)))
+(defun %register-readtable-name (name read-table)
+  (setf (gethash read-table *readtable-names*) name))
 
 (declaim (inline %unregister-readtable-name))
 (defun %unregister-readtable-name (read-table)
@@ -23,7 +22,7 @@
 
 (declaim (inline %list-all-readtable-names))
 (defun %list-all-readtable-names ()
-  (list* "STANDARD" "CURRENT"
+  (list* :standard :current
 	 (loop for name being each hash-value of *readtable-names*
 	       collect name)))
 
@@ -102,26 +101,22 @@
 
 #-allegro
 (progn
-  (defvar *named-readtables* (make-package (gensym "READTABLES+")))
+  (defvar *named-readtables* (make-hash-table :test 'eq))
 
   (declaim (inline %register-readtable))
-  (defun %register-readtable (string-designator read-table)
-    (let ((name (intern (string string-designator) *named-readtables*)))
-      (setf (symbol-value name) read-table)))
+  (defun %register-readtable (name read-table)
+    (setf (gethash name *named-readtables*) read-table))
 
   (declaim (inline %unregister-readtable))
-  (defun %unregister-readtable (string-designator)
-    (let ((name (find-symbol (string string-designator) *named-readtables*)))
-      (when name
-	(setf (symbol-value name) nil)
-	(unintern name *named-readtables*))))
+  (defun %unregister-readtable (name)
+    (remhash name *named-readtables*))
 
   (declaim (inline %find-readtable-from-name))
-  (defun %find-readtable-from-name (string-designator)
-    (let ((name (find-symbol (string string-designator) *named-readtables*)))
-      (and name (symbol-value name)))))
+  (defun %find-readtable-from-name (name)
+    (values (gethash name *named-readtables* nil))))
 
 
+;; FIXME: Adapt from STRING-DESIGNATOR to SYMBOL.
 #+allegro
 (progn
   (defun %register-readtable (string-designator read-table)

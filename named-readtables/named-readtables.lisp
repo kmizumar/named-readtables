@@ -99,11 +99,16 @@ they appear."
 	    (t
 	     `(eval-when (:compile-toplevel :load-toplevel :execute)
 		;; The (FIND-READTABLE ...) is important for proper redefinition semantics.
-		(let ((read-table (or (find-readtable ,string-designator)
-				      (make-readtable ,string-designator
-						      :merge ',(rest (first merge-clauses))))))
-		  ;; We traverse all merge-clauses (i.e. not just (REST MERGE-CLAUSES))
-		  ;; for the case when (FIND-READTABLE ...) was non-NIL.
+		(let ((read-table (find-readtable ,string-designator)))
+		  (if read-table
+		      (simple-style-warn "redefining ~A in ~A" ,string-designator 'defreadtable)
+		      (setq read-table
+			    (make-readtable ,string-designator
+					    ;; We have to provide an explicit :MERGE argument,
+					    ;; because otherwise the :STANDARD readtable would
+					    ;; be used which is not necessarily what we want.
+					    :merge ',(rest (first merge-clauses)))))
+		  ;; We have to grovel all MERGE-CLAUSES for the redefinition case.
 		  ,@(loop for option in merge-clauses
 			  collect (process-option option 'read-table))
 		  ,@(loop for option in case-clauses
@@ -199,27 +204,26 @@ guaranteed to be fresh, but may contain duplicates."
 (deftype named-readtable-designator ()
   `(or readtable-designator string-designator))
 
-(eval-when (:compile-toplevel :load-toplevel :execute)
-  ;;; Although there is no way to get at the standard readtable in
-  ;;; Common Lisp (cf. /standard readtable/, CLHS glossary), we make
-  ;;; up the perception of its existence by interning a copy of it.
-  ;;;
-  ;;; We do this for reverse lookup (cf. READTABLE-NAME), i.e. for
-  ;;;
-  ;;;   (equal (readtable-name (find-readtable :standard)) "STANDARD")
-  ;;;
-  ;;; holding true.
-  ;;;
-  ;;; We, however, inherit the restriction that the :STANDARD
-  ;;; readtable _must not be modified_ (cf. CLHS 2.1.1.2), although it'd
-  ;;; technically be feasible (as *STANDARD-READTABLE* will contain a
-  ;;; mutable copy of the implementation-internal standard readtable.)
-  ;;; We cannot enforce this restriction without shadowing
-  ;;; CL:SET-MACRO-CHARACTER and CL:SET-DISPATCH-MACRO-FUNCTION which
-  ;;; is out of scope of this library, though. So we just threaten
-  ;;; with nasal demons.
-  ;;;
-  (defvar *standard-readtable* (%standard-readtable)))
+;;; Although there is no way to get at the standard readtable in
+;;; Common Lisp (cf. /standard readtable/, CLHS glossary), we make
+;;; up the perception of its existence by interning a copy of it.
+;;;
+;;; We do this for reverse lookup (cf. READTABLE-NAME), i.e. for
+;;;
+;;;   (equal (readtable-name (find-readtable :standard)) "STANDARD")
+;;;
+;;; holding true.
+;;;
+;;; We, however, inherit the restriction that the :STANDARD
+;;; readtable _must not be modified_ (cf. CLHS 2.1.1.2), although it'd
+;;; technically be feasible (as *STANDARD-READTABLE* will contain a
+;;; mutable copy of the implementation-internal standard readtable.)
+;;; We cannot enforce this restriction without shadowing
+;;; CL:SET-MACRO-CHARACTER and CL:SET-DISPATCH-MACRO-FUNCTION which
+;;; is out of scope of this library, though. So we just threaten
+;;; with nasal demons.
+;;;
+(defvar *standard-readtable* (%standard-readtable))
 
 (defun standard-macro-char-p (char rt)
   (multiple-value-bind (rt-fn rt-flag) (get-macro-character char rt)
@@ -241,9 +245,9 @@ guaranteed to be fresh, but may contain duplicates."
 	       :test #'string= :key #'symbol-name)
        t))
 
-;;; We must do reserved readtable lookup seperately, since we can't
-;;; integrate it fully into the registration scheme anyway because of
-;;; :CURRENT. So we just do it completely seperately.
+;;; In principle, we could DEFREADTABLE :STANDARD. But we do reserved
+;;; readtable lookup seperately, since we can't register a readtable
+;;; for :CURRENT anyway.
 
 (defun find-reserved-readtable (reserved-name)
   (cond ((string= reserved-name nil)       *standard-readtable*)
@@ -324,26 +328,28 @@ NAMED-READTABLE-DESIGNATOR or NIL."
 (define-condition simple-style-warning (style-warning simple-warning)
   ())
 
-(eval-when (:compile-toplevel :load-toplevel :execute)
-  (defun constant-standard-readtable-expression-p (thing)
-    (cond ((symbolp thing) (or (eq thing 'nil) (eq thing :standard)))
-	  ((consp thing)   (some (lambda (x) (equal thing x))
-				 '((find-readtable nil)
-				   (find-readtable :standard)
-				   (ensure-readtable nil)
-				   (ensure-readtable :standard))))
-	  (t nil))))
+(defun simple-style-warn (format-control &rest format-args)
+  (warn 'simple-style-warning
+	 :format-control format-control
+	 :format-arguments format-args))
 
-(eval-when (:compile-toplevel :load-toplevel :execute)
-  (defun signal-suspicious-registration-warning (name-expr read-table-expr)
-    (warn 'simple-style-warning
-	  :format-control
-	  "Caution: ~<You're trying to register the :STANDARD readtable ~
-           under a new name ~S. As modification of the :STANDARD readtable ~
-           is not permitted, subsequent modification of ~S won't be ~
-           permitted either. You probably want to wrap COPY-READTABLE ~
-           around~@:>~%             ~S"
-	  :format-arguments `((,name-expr ,name-expr) ,read-table-expr))))
+(defun constant-standard-readtable-expression-p (thing)
+  (cond ((symbolp thing) (or (eq thing 'nil) (eq thing :standard)))
+	((consp thing)   (some (lambda (x) (equal thing x))
+			       '((find-readtable nil)
+				 (find-readtable :standard)
+				 (ensure-readtable nil)
+				 (ensure-readtable :standard))))
+	(t nil)))
+
+(defun signal-suspicious-registration-warning (name-expr read-table-expr)
+  (simple-style-warn
+   "Caution: ~<You're trying to register the :STANDARD readtable ~
+    under a new name ~S. As modification of the :STANDARD readtable ~
+    is not permitted, subsequent modification of ~S won't be ~
+    permitted either. You probably want to wrap COPY-READTABLE ~
+    around~@:>~%             ~S"
+   (list name-expr name-expr) read-table-expr))
 
 (define-compiler-macro register-readtable (&whole form name read-table)
   (when (constant-standard-readtable-expression-p read-table)

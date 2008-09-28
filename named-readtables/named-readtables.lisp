@@ -38,6 +38,22 @@
 ;;;
 
 
+;;; TODO:
+;;;
+;;;    * Remove redefinition style-warning in DEFREADTABLE
+;;;
+;;;    * Add style-warning if redefined readtable contains entries
+;;;      not specified in the DEFREADTABLE form (cf. SBCL's DEFPACKAGE)
+;;;
+;;;    * Add style-warning if :MERGE overwrites entries
+;;;
+;;;    * Add :FUZE that's like :MERGE without the style-warnings
+;;;
+;;;    * Revamp cruft.lisp, introduce DEFINTERFACE, DEFIMPLEMENTATION
+;;;
+;;;    * Think about MAKE-DISPATCHING-MACRO-CHARACTER in DEFREADTABLE
+
+
 ;;;;;; DEFREADTABLE &c.
 
 (defmacro defreadtable (name &body options)
@@ -106,10 +122,10 @@ they appear."
 	    (t
 	     `(eval-when (:compile-toplevel :load-toplevel :execute)
 		;; The (FIND-READTABLE ...) is important for proper redefinition semantics.
-		(let ((read-table (find-readtable ',name)))
-		  (if read-table
+		(let ((readtable (find-readtable ',name)))
+		  (if readtable
 		      (simple-style-warn "redefining ~A in DEFREADTABLE" ',name)
-		      (setq read-table
+		      (setq readtable
 			    (make-readtable ',name
 					    ;; We have to provide an explicit :MERGE argument,
 					    ;; because otherwise the :STANDARD readtable would
@@ -117,12 +133,12 @@ they appear."
 					    :merge ',(rest (first merge-clauses)))))
 		  ;; We have to grovel all MERGE-CLAUSES for the redefinition case.
 		  ,@(loop for option in merge-clauses
-			  collect (process-option option 'read-table))
+			  collect (process-option option 'readtable))
 		  ,@(loop for option in case-clauses
-			  collect (process-option option 'read-table))
+			  collect (process-option option 'readtable))
 		  ,@(loop for option in macro-clauses
-			  collect (process-option option 'read-table))
-		  read-table)))))))
+			  collect (process-option option 'readtable))
+		  readtable)))))))
 
 ;;; KLUDGE:
 ;;;   We need support for this in Slime itself, because we want IN-READTABLE

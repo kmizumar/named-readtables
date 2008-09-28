@@ -47,14 +47,14 @@ Or, if a readtable is already registered under that name, redefines that one.
 The readtable can be populated using the OPTIONS &rest argument, as follows:
 
   (:MERGE &REST READTABLE-DESIGNATORS) -- merge the readtables designated into
-      the new readtable, using MERGE-READTABLES-INTO.  It is mandatory to supply 
+      the new readtable, using MERGE-READTABLES-INTO.  It is mandatory to supply
       at least one :MERGE option naming a readtable to incorporate.
  
-      Defreadtable accepts some special readtable designators, including
+      DEFREADTABLE accepts some special readtable designators, including
       NIL or :STANDARD for the standard readtable and :CURRENT for the current
       readtable, as well as the names of programmer-defined readtables.
 
-      Note that the process of merging readtables is _not_ commutative, so that 
+      Note that the process of merging readtables is _not_ commutative, so that
       macros in later entries will overwrite earlier ones, left to right in a single
       :MERGE directive, and one after another across multiple :MERGE directives.
 
@@ -62,7 +62,9 @@ The readtable can be populated using the OPTIONS &rest argument, as follows:
       dispatch macro character in the readtable, per SET-DISPATCH-MACRO-CHARACTER.
 
   (:MACRO-CHAR MACRO-CHAR FUNCTION &OPTIONAL NON-TERMINATING-P) -- define a 
-      new macro character in the readtable, per SET-MACRO-CHARACTER.
+      new macro character in the readtable, per SET-MACRO-CHARACTER. If FUNCTION
+      is the keyword :DISPATCH, MACRO-CHAR is made a dispatching macro character,
+      per MAKE-DISPATCH-MACRO-CHARACTER.
 
   (:CASE CASE-MODE) -- defines the /case sensititivy mode/ of the resulting
       readtable.
@@ -122,12 +124,30 @@ they appear."
 			  collect (process-option option 'read-table))
 		  read-table)))))))
 
+;;; KLUDGE:
+;;;   We need support for this in Slime itself, because we want IN-READTABLE
+;;;   to work on a per-file basis, and not on a per-package basis.
+;;; 
+(defun %frob-swank-readtable-alist (package readtable)
+  (let ((readtable-alist (find-symbol "*READTABLE-ALIST*" (find-package "SWANK"))))
+    (when (boundp readtable-alist)
+      (pushnew (cons (package-name package) readtable)
+	       (symbol-value readtable-alist)
+	       :test #'(lambda (entry1 entry2)
+			 (destructuring-bind (pkg-name1 . rt1) entry1
+			   (destructuring-bind (pkg-name2 . rt2) entry2
+			     (and (string= pkg-name1 pkg-name2)
+				  (eq rt1 rt2)))))))))
+
 (defmacro in-readtable (name)
   "Bind the *readtable* to the readtable referred to by NAME, raising
 an error if no such readtable can be found."
   (check-type name symbol)
   `(eval-when (:compile-toplevel :load-toplevel :execute)
-     (setf *readtable* (ensure-readtable ',name))))
+     (setf *readtable* (ensure-readtable ',name))
+     (when (find-package "SWANK")
+       (%frob-swank-readtable-alist *package* *readtable*))
+     ))
 
 (defun make-readtable (name &key merge)
   "Makes and returns a new readtable under the specified NAME. The

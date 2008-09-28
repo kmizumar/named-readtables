@@ -360,7 +360,7 @@ NAMED-READTABLE-DESIGNATOR or NIL."
 ;;; readtable (and thus rendering this readtable to be non-standard,
 ;;; in fact.)
 
-(define-condition simple-style-warning (style-warning simple-warning)
+(define-condition simple-style-warning (simple-warning style-warning)
   ())
 
 (defun simple-style-warn (format-control &rest format-args)

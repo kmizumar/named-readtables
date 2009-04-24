@@ -6,22 +6,22 @@
   (warn "~A hasn't been ported to ~A; you're likely to get a compiler error" 
 	(package-name *package*) (lisp-implementation-type)))
 
+(defmacro define-inline-function (name lambda-list &body body)
+  `(progn (declaim (inline ,name))
+	  (defun ,name ,lambda-list ,@body)))
+
 (defvar *readtable-names* (make-hash-table :test 'eq))
 
-(declaim (inline %register-readtable-name))
-(defun %register-readtable-name (name read-table)
+(define-inline-function %register-readtable-name (name read-table)
   (setf (gethash read-table *readtable-names*) name))
 
-(declaim (inline %unregister-readtable-name))
-(defun %unregister-readtable-name (read-table)
+(define-inline-function %unregister-readtable-name (read-table)
   (remhash read-table *readtable-names*))
 
-(declaim (inline %readtable-name))
-(defun %readtable-name (read-table)
+(define-inline-function %readtable-name (read-table)
   (values (gethash read-table *readtable-names*)))
 
-(declaim (inline %list-all-readtable-names))
-(defun %list-all-readtable-names ()
+(define-inline-function %list-all-readtable-names ()
   (list* :standard :current
 	 (loop for name being each hash-value of *readtable-names*
 	       collect name)))
@@ -32,8 +32,7 @@
   (when (find-package "SB-READER")
     (push :sbcl+sb-reader *features*)))
 
-(declaim (inline %standard-readtable))
-(defun %standard-readtable ()
+(define-inline-function %standard-readtable ()
   #+sbcl+sb-reader sb-reader:*standard-readtable*
   #-sbcl+sb-reader (copy-readtable nil))
 
@@ -103,16 +102,13 @@
 (progn
   (defvar *named-readtables* (make-hash-table :test 'eq))
 
-  (declaim (inline %register-readtable))
-  (defun %register-readtable (name read-table)
+  (define-inline-function %register-readtable (name read-table)
     (setf (gethash name *named-readtables*) read-table))
 
-  (declaim (inline %unregister-readtable))
-  (defun %unregister-readtable (name)
+  (define-inline-function %unregister-readtable (name)
     (remhash name *named-readtables*))
 
-  (declaim (inline %find-readtable-from-name))
-  (defun %find-readtable-from-name (name)
+  (define-inline-function %find-readtable-from-name (name)
     (values (gethash name *named-readtables* nil))))
 
 

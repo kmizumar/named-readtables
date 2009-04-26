@@ -1,3 +1,10 @@
+;;;;
+;;;; Copyright (c) 2008 - 2009 Tobias C. Rittweiler <tcr@freebits.de>
+;;;;
+;;;; All rights reserved.
+;;;;
+;;;; See LICENSE for details.
+;;;;
 
 (in-package :editor-hints.named-readtables)
 

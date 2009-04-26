@@ -1,11 +1,11 @@
-;;;
-;;; Copyright (c) 2007 - 2009 Tobias C. Rittweiler <tcr@freebits.de>
-;;; Copyright (c) 2007, Robert P. Goldman <rpgoldman@sift.info> and SIFT, LLC
-;;;
-;;; All rights reserved.
-;;;
-;;; See LICENSE for details.
-;;;
+;;;;
+;;;; Copyright (c) 2007 - 2009 Tobias C. Rittweiler <tcr@freebits.de>
+;;;; Copyright (c) 2007, Robert P. Goldman <rpgoldman@sift.info> and SIFT, LLC
+;;;;
+;;;; All rights reserved.
+;;;;
+;;;; See LICENSE for details.
+;;;;
 
 (in-package :editor-hints.named-readtables)
 

@@ -1,11 +1,6 @@
 
 (in-package :editor-hints.named-readtables)
 
-#-(or sbcl clozure)
-(eval-when (:compile-toplevel)
-  (warn "~A hasn't been ported to ~A; you're likely to get a compiler error" 
-	(package-name *package*) (lisp-implementation-type)))
-
 (defmacro define-cruft (name lambda-list &body (docstring . alternatives))
   (assert (typep docstring 'string) (docstring) "Docstring missing!")
   (assert (not (null alternatives)))
@@ -16,7 +11,7 @@
 (eval-when (:compile-toplevel :execute)
   #+sbcl (when (find-symbol "ASSERT-NOT-STANDARD-READTABLE"
                             (find-package "SB-IMPL"))
-           (push :sbcl+safe-standard-readtable *features*)))
+           (pushnew :sbcl+safe-standard-readtable *features*)))
 
 
 ;;;;; Implementation-dependent cruft
@@ -98,6 +93,12 @@
 
 ;;;; Readtables Iterators
 
+(defmacro with-readtable-iterator ((name readtable) &body body)
+  (let ((it (gensym)))
+    `(let ((,it (%make-readtable-iterator ,readtable)))
+       (macrolet ((,name () `(funcall ,',it)))
+         ,@body))))
+
 #+sbcl
 (defun %make-readtable-iterator (readtable)
   (let ((char-macro-array (sb-impl::character-macro-array readtable))
@@ -142,9 +143,34 @@
                 (values t char defn nil nil)))
           (values nil nil nil nil nil)))))
 
-(defmacro with-readtable-iterator ((name readtable) &body body)
-  (let ((it (gensym)))
-    `(let ((,it (%make-readtable-iterator ,readtable)))
-       (macrolet ((,name () `(funcall ,',it)))
-         ,@body))))
+#-(or sbcl clozure)
+(eval-when (:compile-toplevel)
+  (simple-style-warn
+   "~A hasn't been ported to ~A. ~
+    We fall back to a portable implementation of readtable iterators. ~
+    This implementation has to grovel through all available characters. ~
+    On Unicode-aware implementations this comes with some costs." 
+   (package-name *package*) (lisp-implementation-type)))
 
+#-(or sbcl clozure)
+(defun %make-readtable-iterator (readtable)
+  (check-type readtable readtable)
+  (let ((char-code 0))
+    #'(lambda ()
+        (prog ()
+           :GROVEL
+           (when (< char-code char-code-limit)
+             (let* ((char (code-char char-code))
+                    (fn   (get-macro-character char readtable)))
+               (incf char-code)
+               (when (not fn) (go :GROVEL))
+               (multiple-value-bind (disp? alist)
+                   (handler-case ; grovel dispatch macro characters.
+                       (values t (loop for code from 0 below char-code-limit
+                                       for subchar = (code-char code)
+                                       for disp-fn = (get-dispatch-macro-character
+                                                      char subchar readtable)
+                                       when disp-fn
+                                       collect (cons subchar disp-fn)))
+                     (error () nil))
+                 (return (values t char fn disp? alist)))))))))

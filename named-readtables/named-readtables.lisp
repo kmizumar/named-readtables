@@ -1,32 +1,11 @@
-
-;;; Copyright (c) 2007, Tobias C. Rittweiler <tcr@freebits.de>,
-;;;                     Robert P. Goldman <rpgoldman@sift.info> and SIFT, LLC
+;;;
+;;; Copyright (c) 2007 - 2009 Tobias C. Rittweiler <tcr@freebits.de>
+;;; Copyright (c) 2007, Robert P. Goldman <rpgoldman@sift.info> and SIFT, LLC
+;;;
 ;;; All rights reserved.
 ;;;
-;;; Redistribution and use in source and binary forms, with or without
-;;; modification, are permitted provided that the following conditions are met:
-;;;     * Redistributions of source code must retain the above copyright
-;;;       notice, this list of conditions and the following disclaimer.
-;;;     * Redistributions in binary form must reproduce the above copyright
-;;;       notice, this list of conditions and the following disclaimer in the
-;;;       documentation and/or other materials provided with the distribution.
-;;;     * Neither the names of Tobias C. Rittweiler, Robert P. Goldman, SIFT, LLC nor the
-;;;       names of its contributors may be used to endorse or promote products
-;;;       derived from this software without specific prior written permission.
+;;; See LICENSE for details.
 ;;;
-;;; THIS SOFTWARE IS PROVIDED BY Tobias C. Rittweiler, Robert
-;;; P. Goldman and SIFT, LLC ``AS IS'' AND ANY EXPRESS OR IMPLIED
-;;; WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
-;;; OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-;;; DISCLAIMED. IN NO EVENT SHALL Tobias C. Rittweiler, Robert
-;;; P. Goldman or SIFT, LLC BE LIABLE FOR ANY DIRECT, INDIRECT,
-;;; INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-;;; (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
-;;; SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
-;;; HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
-;;; CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
-;;; OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
-;;; EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 (in-package :editor-hints.named-readtables)
 
@@ -199,10 +178,10 @@ registered under the new name, an error is raised."
 	 (read-table-name (readtable-name read-table)))
     ;; We use the internal functions directly to omit repeated
     ;; type-checking.
-    (%unregister-readtable-name read-table)
-    (%unregister-readtable read-table-name)
-    (%register-readtable-name new-name read-table)
-    (%register-readtable new-name read-table)
+    (%unassociate-name-from-readtable read-table-name read-table)
+    (%unassociate-readtable-from-name read-table-name read-table)
+    (%associate-name-with-readtable new-name read-table)
+    (%associate-readtable-with-name new-name read-table)
     read-table))
 
 (defun merge-readtables-into (result-table &rest named-readtable-designators)
@@ -212,7 +191,7 @@ turn, macro definitions in readtables later in the list will overwrite
 definitions in readtables listed earlier.  Notice that the /readtable
 case/ is also subject of the merge operation."
   (flet ((merge-into (rt1 rt2)
-	   (%with-readtable-iterator (rt2-iter rt2)
+	   (with-readtable-iterator (rt2-iter rt2)
 	     (loop
 	      (multiple-value-bind (more? char reader-fn disp? table) (rt2-iter)
 		(unless more? (return))
@@ -298,7 +277,7 @@ returns it if it is found. Returns NIL otherwise."
     (cond ((readtablep designator) designator)
 	  ((reserved-readtable-name-p designator)
 	   (find-reserved-readtable designator))
-	  ((%find-readtable-from-name designator)))))
+	  ((%find-readtable designator)))))
 
 ;;; FIXME: This doesn't take a NAMED-READTABLE-DESIGNATOR, but only a
 ;;; STRING-DESIGNATOR. (When fixing, heed interplay with compiler
@@ -323,8 +302,8 @@ is signalled."
   (check-type name symbol)
   (check-type read-table readtable)
   (check-type name (not (satisfies reserved-readtable-name-p)))
-  (%register-readtable-name name read-table)
-  (%register-readtable name read-table)
+  (%associate-readtable-with-name name read-table)
+  (%associate-name-with-readtable name read-table)
   read-table)
 
 (defun unregister-readtable (named-readtable-designator)
@@ -336,8 +315,8 @@ Returns T if successfull, NIL otherwise."
 	nil
 	(prog1 t
 	  (check-type read-table-name (not (satisfies reserved-readtable-name-p)))
-	  (%unregister-readtable-name read-table)
-	  (%unregister-readtable read-table-name)))))
+            (%unassociate-readtable-from-name read-table-name read-table)
+            (%unassociate-name-from-readtable read-table-name read-table)))))
 
 (defun readtable-name (named-readtable-designator)
   "Returns the name of the readtable designated by
@@ -360,13 +339,6 @@ NAMED-READTABLE-DESIGNATOR or NIL."
 ;;; readtable (and thus rendering this readtable to be non-standard,
 ;;; in fact.)
 
-(define-condition simple-style-warning (simple-warning style-warning)
-  ())
-
-(defun simple-style-warn (format-control &rest format-args)
-  (warn 'simple-style-warning
-	 :format-control format-control
-	 :format-arguments format-args))
 
 (defun constant-standard-readtable-expression-p (thing)
   (cond ((symbolp thing) (or (eq thing 'nil) (eq thing :standard)))
@@ -386,14 +358,22 @@ NAMED-READTABLE-DESIGNATOR or NIL."
     around~@:>~%             ~S"
    (list name-expr name-expr) read-table-expr))
 
-(define-compiler-macro register-readtable (&whole form name read-table)
-  (when (constant-standard-readtable-expression-p read-table)
-    (signal-suspicious-registration-warning name read-table))
-  form)
+(let ()
+  ;; Defer to runtime because compiler-macros are made available already
+  ;; at compilation time. So without this two subsequent invocations of
+  ;; COMPILE-FILE on this file would result in an undefined function
+  ;; error because the two above functions are not yet available.
+  ;; (This does not use EVAL-WHEN because of Fig 3.7, CLHS 3.2.3.1;
+  ;; cf. last example in CLHS "EVAL-WHEN" entry.)
+  
+  (define-compiler-macro register-readtable (&whole form name read-table)
+    (when (constant-standard-readtable-expression-p read-table)
+      (signal-suspicious-registration-warning name read-table))
+    form)
 
-(define-compiler-macro ensure-readtable (&whole form name &optional (default nil default-p))
-  (when (and default-p (constant-standard-readtable-expression-p default))
-    (signal-suspicious-registration-warning name default))
-  form)
+  (define-compiler-macro ensure-readtable (&whole form name &optional (default nil default-p))
+    (when (and default-p (constant-standard-readtable-expression-p default))
+      (signal-suspicious-registration-warning name default))
+    form))
 
 

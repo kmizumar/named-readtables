@@ -1,6 +1,14 @@
 
 (in-package :editor-hints.named-readtables)
 
+(define-condition simple-style-warning (simple-warning style-warning)
+  ())
+
+(defun simple-style-warn (format-control &rest format-args)
+  (warn 'simple-style-warning
+	 :format-control format-control
+	 :format-arguments format-args))
+
 ;;; Taken from SWANK (which is Public Domain.)
 
 (defmacro destructure-case (value &rest patterns)

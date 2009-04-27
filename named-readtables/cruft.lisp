@@ -150,7 +150,44 @@
                 (values t char defn nil nil)))
           (values nil nil nil nil nil)))))
 
-#-(or sbcl clozure)
+#+allegro
+(defun %make-readtable-iterator (readtable)
+  (declare (optimize speed))            ; for TCO
+  (check-type readtable readtable)
+  (let* ((+macro-attr+ 1)               ; discovered through "reverse-engineering"
+         (attribute-table (first (excl::readtable-attribute-table readtable)))
+         (macro-table     (first (excl::readtable-macro-table readtable)))
+         (dispatch-tables (excl::readtable-dispatch-tables readtable))
+         (table-length    (length attribute-table))
+         (idx 0))
+    (assert (= table-length (length macro-table)))
+    (labels ((grovel-macro-chars ()
+               (if (>= idx table-length)
+                   (grovel-dispatch-chars)
+                   (let ((attr (svref attribute-table idx)))
+                     (incf idx)
+                     (if (= attr +macro-attr+)
+                         (values t (code-char (1- idx)) (svref macro-table idx) nil nil)
+                         (grovel-macro-chars)))))
+             (grovel-dispatch-chars ()
+               (if (null dispatch-tables)
+                   (values nil nil nil nil nil)
+                   (destructuring-bind (disp-char sub-char-table)
+                       (first dispatch-tables)
+                     (setf dispatch-tables (rest dispatch-tables))
+                     (values t
+                             disp-char
+                             (svref macro-table (char-code disp-char))
+                             t
+                             (loop for subch-fn   across sub-char-table
+                                   for subch-code from 0
+                                   when subch-fn
+                                     collect (cons (code-char subch-code)
+                                                   subch-fn)))))))
+      #'grovel-macro-chars)
+    ))
+
+#-(or sbcl clozure allegro)
 (eval-when (:compile-toplevel)
   (simple-style-warn
    "~A hasn't been ported to ~A. ~
@@ -159,7 +196,7 @@
     On Unicode-aware implementations this comes with some costs." 
    (package-name *package*) (lisp-implementation-type)))
 
-#-(or sbcl clozure)
+#-(or sbcl clozure allegro)
 (defun %make-readtable-iterator (readtable)
   (check-type readtable readtable)
   (let ((char-code 0))

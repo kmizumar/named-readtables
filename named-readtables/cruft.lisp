@@ -69,12 +69,14 @@
 #+allegro
 (defun readtable-name-for-allegro (symbol)
   (multiple-value-bind (kwd status)
-        ;; Kludge: ACL uses keywords to name readtables, we allow
-        ;; arbitrary symbols.
-        (intern (format nil "~A.~A"
-                        (package-name (symbol-package symbol))
-                        (symbol-name symbol))
-                :keyword)
+        (if (keywordp symbol)
+            (values symbol nil)
+            ;; Kludge: ACL uses keywords to name readtables, we allow
+            ;; arbitrary symbols.
+            (intern (format nil "~A.~A"
+                            (package-name (symbol-package symbol))
+                            (symbol-name symbol))
+                    :keyword))
     (prog1 kwd
       (assert (or (not status) (get kwd 'named-readtable-designator)))
       (setf (get kwd 'named-readtable-designator) t))))
@@ -150,6 +152,7 @@
                 (values t char defn nil nil)))
           (values nil nil nil nil nil)))))
 
+;;; Written on ACL 8.0.
 #+allegro
 (defun %make-readtable-iterator (readtable)
   (declare (optimize speed))            ; for TCO

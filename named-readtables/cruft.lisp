@@ -72,8 +72,8 @@
         ;; Kludge: ACL uses keywords to name readtables, we allow
         ;; arbitrary symbols.
         (intern (format nil "~A.~A"
-                        (package-name (symbol-package name))
-                        (symbol-name name))
+                        (package-name (symbol-package symbol))
+                        (symbol-name symbol))
                 :keyword)
     (prog1 kwd
       (assert (or (not status) (get kwd 'named-readtable-designator)))
@@ -81,20 +81,20 @@
 
 (define-cruft %associate-name-with-readtable (name readtable)
   "Associate NAME with READTABLE for FIND-READTABLE to work."
-  #+ :allegro     (setf (named-readtable (readtable-name-for-allegro name)) readtable)
+  #+ :allegro     (setf (excl:named-readtable (readtable-name-for-allegro name)) readtable)
   #+ :common-lisp (setf (gethash name *named-readtables*) readtable))
 
 (define-cruft %unassociate-name-from-readtable (name readtable)
   "Remove the association between NAME and READTABLE"
   #+ :allegro     (let ((n (readtable-name-for-allegro name)))
-                    (assert (eq readtable (named-readtable n)))
-                    (setf (named-readtable n) nil))
+                    (assert (eq readtable (excl:named-readtable n)))
+                    (setf (excl:named-readtable n) nil))
   #+ :common-lisp (progn (assert (eq readtable (gethash name *named-readtables*)))
                          (remhash name *named-readtables*)))
 
 (define-cruft %find-readtable (name)
   "Return the readtable named NAME."
-  #+ :allegro     (named-readtable (readtable-name-for-allegro name))
+  #+ :allegro     (excl:named-readtable (readtable-name-for-allegro name))
   #+ :common-lisp (values (gethash name *named-readtables* nil)))
 
 

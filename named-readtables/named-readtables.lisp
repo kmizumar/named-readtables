@@ -375,9 +375,10 @@ Returns T if successfull, NIL otherwise."
 NAMED-READTABLE-DESIGNATOR or NIL."
   (check-type named-readtable-designator named-readtable-designator)
   (let ((read-table (ensure-readtable named-readtable-designator)))
-    (cond ((eq read-table *readtable*)          :current)
+    (cond ((%readtable-name readtable))
+          ((eq read-table *readtable*)          :current)
 	  ((eq read-table *standard-readtable*) :standard)
-	  (t (%readtable-name read-table)))))
+	  (t nil))))
 
 
 ;;;;; Compiler macros

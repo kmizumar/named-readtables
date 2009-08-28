@@ -35,37 +35,55 @@
 
 (defmacro defreadtable (name &body options)
   "Define a new named readtable, whose name is given by the symbol NAME.
-Or, if a readtable is already registered under that name, redefines that one.
+Or, if a readtable is already registered under that name, redefine that one.
 
-The readtable can be populated using the OPTIONS &rest argument, as follows:
+The readtable can be populated using the following OPTIONS:
 
-  (:MERGE &REST READTABLE-DESIGNATORS) -- merge the readtables designated into
-      the new readtable, using MERGE-READTABLES-INTO.  It is mandatory to supply
-      at least one :MERGE option naming a readtable to incorporate.
+  (:MERGE &REST READTABLE-DESIGNATORS) 
+
+      Merge the readtables designated into the new readtable, using
+      `merge-readtables-into'.  It is mandatory to supply at least one :MERGE
+      clause.
  
-      DEFREADTABLE accepts some special readtable designators, including
-      NIL or :STANDARD for the standard readtable and :CURRENT for the current
+      DEFREADTABLE accepts some special readtable designators, including NIL
+      or :STANDARD for the standard readtable and :CURRENT for the current
       readtable, as well as the names of programmer-defined readtables.
 
       Note that the process of merging readtables is _not_ commutative, so that
-      macros in later entries will overwrite earlier ones, left to right in a single
-      :MERGE directive, and one after another across multiple :MERGE directives.
+      macros in later entries will overwrite earlier ones.
 
-  (:DISPATCH-MACRO-CHAR MACRO-CHAR SUB-CHAR FUNCTION) -- define a new
-      dispatch macro character in the readtable, per SET-DISPATCH-MACRO-CHARACTER.
+  (:DISPATCH-MACRO-CHAR MACRO-CHAR SUB-CHAR FUNCTION)
 
-  (:MACRO-CHAR MACRO-CHAR FUNCTION &OPTIONAL NON-TERMINATING-P) -- define a 
-      new macro character in the readtable, per SET-MACRO-CHARACTER. If FUNCTION
-      is the keyword :DISPATCH, MACRO-CHAR is made a dispatching macro character,
-      per MAKE-DISPATCH-MACRO-CHARACTER.
+      Define a new sub character SUB-CHAR for the dispatching macro character
+      MACRO-CHAR, per `set-dispatch-macro-character'. You probably have to
+      define MACRO-CHAR as a dispatching macro character by the following option
+      first.
 
-  (:CASE CASE-MODE) -- defines the /case sensititivy mode/ of the resulting
-      readtable.
+  (:MACRO-CHAR MACRO-CHAR FUNCTION &OPTIONAL NON-TERMINATING-P)
 
-  Any number of option clauses may appear.  The :merge directives are evaluated first,
-then the :case directives are evaluated in the order they appear. At last the local
-macro definitions in :dispatch-macro-char and :macro-char are evaluated in the order
-they appear."
+      Define a new macro character in the readtable, per `set-macro-character'.
+      If FUNCTION is the keyword :DISPATCH, MACRO-CHAR is made a dispatching
+      macro character, per `make-dispatch-macro-character'.
+
+  (:SYNTAX-FROM FROM-READTABLE-DESIGNATOR FROM-CHAR TO-CHAR)
+
+      Set the character syntax of TO-CHAR in the readtable being defined to the
+      same syntax as FROM-CHAR in FROM-READTABLE-DESIGNATOR as per
+      `set-syntax-from-char'.
+
+  (:CASE CASE-MODE) 
+
+      Defines the /case sensititivy mode/ of the resulting readtable.
+
+Any number of option clauses may appear. The options are grouped by their
+type, but in each group the textual order the options appeared is preserved.
+The following groups exist and are executed in this order: :MERGE, :CASE, 
+:MACRO-CHAR and :DISPATCH-MACRO-CHAR (one group), finally :SYNTAX-FROM.
+
+The readtable is defined at load-time. If you want to have it available at
+compilation time -- say to use its reader-macros in the same file as its
+definition -- you have to wrap the DEFREADTABLE form in an explicit EVAL-WHEN.
+"
   (check-type name symbol)
   (when (reserved-readtable-name-p name)
     (error "~A is the designator for a predefined readtable. ~
@@ -83,43 +101,66 @@ they appear."
 		  ;; an appropriate patch upstream.
 		  `(make-dispatch-macro-character ,char ,non-terminating-p ,var)
 		  `(set-macro-character ,char ,function ,non-terminating-p ,var)))
+	     ((:syntax-from from-rt-designator from-char to-char)
+	      `(set-syntax-from-char ,to-char ,from-char 
+				     ,var (find-readtable ,from-rt-designator)))
 	     ((:case mode)
 	      `(setf (readtable-case ,var) ,mode))))
-	 (member-of (&rest rest) #'(lambda (x) (member x rest))))
-    (let* ((merge-clauses (remove-if-not (member-of :merge) options :key #'first))
-	   (case-clauses  (remove-if-not (member-of :case)  options :key #'first))
-	   (macro-clauses (remove-if-not (member-of :macro-char
-						    :dispatch-macro-char) options
-					 :key #'first))
-	   (other-clauses (set-difference options (append merge-clauses case-clauses macro-clauses))))
-      (cond ((null merge-clauses)
-	     (error "Not at least one (:merge ...) clause given in DEFREADTABLE form."))
-	    ((not (null other-clauses))
-	     (error "Bogus DEFREADTABLE clauses: ~{~A~^, ~}" other-clauses))
-	    (t
-	     `(eval-when (:load-toplevel :execute)
-		;; The (FIND-READTABLE ...) is important for proper redefinition semantics.
-		(handler-bind ((readtable-does-already-exist
-				#'(lambda (c)
-				    (simple-style-warn 
-				     "Overwriting previously existing readtable ~S."
-				     (existing-readtable-name c))
-				    (continue c))))
-		  (let ((readtable (find-readtable ',name)))
-		    (setq readtable
-			  (make-readtable ',name
-					  ;; We have to provide an explicit :MERGE argument,
-					  ;; because otherwise the :STANDARD readtable would
-					  ;; be used which is not necessarily what we want.
-					  :merge ',(rest (first merge-clauses))))
-		    ;; We have to grovel all MERGE-CLAUSES for the redefinition case.
-		    ,@(loop for option in merge-clauses
-			    collect (process-option option 'readtable))
-		    ,@(loop for option in case-clauses
-			    collect (process-option option 'readtable))
-		    ,@(loop for option in macro-clauses
-			    collect (process-option option 'readtable))
-		    readtable))))))))
+	 (remove-clauses (clauses options)
+	   (setq clauses (if (listp clauses) clauses (list clauses)))
+	   (remove-if-not #'(lambda (x) (member x clauses)) 
+			  options :key #'first)))
+    (let* ((merge-clauses  (remove-clauses :merge options))
+	   (case-clauses   (remove-clauses :case  options))
+	   (macro-clauses  (remove-clauses '(:macro-char :dispatch-macro-char)
+					   options))
+	   (syntax-clauses (remove-clauses :syntax-from options))
+	   (other-clauses  (set-difference options 
+					   (append merge-clauses case-clauses 
+						   macro-clauses syntax-clauses))))
+      (cond 
+	((null merge-clauses)
+	 (error "You must specify at least one :MERGE clause in DEFREADTABLE."))
+	((not (null other-clauses))
+	 (error "Bogus DEFREADTABLE clauses: ~{~A~^, ~}" other-clauses))
+	(t
+	 `(eval-when (:load-toplevel :execute)
+	    (handler-bind ((readtable-does-already-exist
+			    #'(lambda (c)
+				(simple-style-warn 
+				 "Overwriting previously existing readtable ~S."
+				 (existing-readtable-name c))
+				(continue c))))
+	      ;; The (FIND-READTABLE ...) is important for proper redefinition
+	      ;; semantics.
+	      (let ((readtable (find-readtable ',name)))
+		(setq readtable
+		      (make-readtable ',name
+				      ;; We have to provide an explicit :MERGE
+				      ;; argument, because otherwise the
+				      ;; :STANDARD readtable would be used which
+				      ;; is not necessarily what we want.
+				      :merge ',(rest (first merge-clauses))))
+		;; We have to grovel all MERGE-CLAUSES for the redefinition case.
+		,@(loop for option in merge-clauses
+			collect (process-option option 'readtable))
+		,@(loop for option in case-clauses
+			collect (process-option option 'readtable))
+		,@(loop for option in macro-clauses
+			collect (process-option option 'readtable))
+		,@(loop for option in syntax-clauses
+			collect (process-option option 'readtable))
+		readtable))))))))
+
+(defmacro in-readtable (name)
+  "Bind the *readtable* to the readtable referred to by NAME, raising
+an error if no such readtable can be found."
+  (check-type name symbol)
+  `(eval-when (:compile-toplevel :load-toplevel :execute)
+     (setf *readtable* (ensure-readtable ',name))
+     (when (find-package :swank)
+       (%frob-swank-readtable-alist *package* *readtable*))
+     ))
 
 ;;; KLUDGE:
 ;;;   We need support for this in Slime itself, because we want IN-READTABLE
@@ -137,15 +178,6 @@ they appear."
 			     (and (string= pkg-name1 pkg-name2)
 				  (eq rt1 rt2)))))))))
 
-(defmacro in-readtable (name)
-  "Bind the *readtable* to the readtable referred to by NAME, raising
-an error if no such readtable can be found."
-  (check-type name symbol)
-  `(eval-when (:compile-toplevel :load-toplevel :execute)
-     (setf *readtable* (ensure-readtable ',name))
-     (when (find-package :swank)
-       (%frob-swank-readtable-alist *package* *readtable*))
-     ))
 
 (defun make-readtable (name &key merge)
   "Makes and returns a new readtable under the specified NAME. The

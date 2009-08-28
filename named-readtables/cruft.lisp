@@ -221,3 +221,21 @@
                                        collect (cons subchar disp-fn)))
                      (error () nil))
                  (return (values t char fn disp? alist)))))))))
+
+
+;;;; Specialized PRINT-OBJECT for named readtables.
+
+;;; As per #19 in CLHS 11.1.2.1.2 defining a method for PRINT-OBJECT
+;;; that specializes on READTABLE is actually forbidden. It's quite
+;;; likely to work on most implementations, though.
+
+;;; We don't need this on Allegro CL's as we hook into their
+;;; named-readtable facility, and they provide such a method already.
+
+#-allegro
+(defmethod print-object :around ((rt readtable) stream)
+  (let ((name (readtable-name rt)))
+    (if name
+	(print-unreadable-object (rt stream :type nil :identity t)
+	  (format stream "~A ~S" (string :named-readtable) name))
+	(call-next-method))))

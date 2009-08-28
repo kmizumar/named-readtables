@@ -192,7 +192,7 @@ the :STANDARD readtable is used instead."
                    Not acceptable as a user-specified readtable name." name))
 	  ((let ((rt (find-readtable name)))
 	     (and rt (cerror "Overwrite existing readtable." 
-			     'readtable-does-already-exist :readtable rt))))
+			     'readtable-does-already-exist :readtable-name name))))
 	  (t (let ((result (apply #'merge-readtables-into
 				  ;; The first readtable specified in the :merge list is
 				  ;; taken as the basis for all subsequent (destructive!)
@@ -208,7 +208,8 @@ registered under the new name, an error is raised."
   (check-type named-readtable-designator named-readtable-designator)
   (check-type new-name symbol)
   (when (find-readtable new-name)
-    (error "A readtable named ~S already exists." new-name))
+    (cerror "Overwrite existing readtable." 
+            'readtable-does-already-exist :readtable-name new-name))
   (let* ((read-table (ensure-readtable named-readtable-designator))
 	 (read-table-name (readtable-name read-table)))
     ;; We use the internal functions directly to omit repeated
@@ -261,15 +262,20 @@ guaranteed to be fresh, but may contain duplicates."
 (define-condition readtable-does-not-exist (readtable-error)
   ((readtable-name :initarg :readtable-name 
 	           :initform (required-argument)
-	           :accessor missing-readtable-name)))
+	           :accessor missing-readtable-name
+                   :type named-readtable-designatord))
+  (:report (lambda (condition stream)
+             (format stream "A readtable named ~S does not exist."
+                     (missing-readtable-name condition)))))
 
 (define-condition readtable-does-already-exist (readtable-error)
-  ((readtable-name :initarg :readtable 
-		   :initform (required-argument)
-		   :accessor existing-readtable-name))
+  ((readtable-name :initarg :readtable-name
+                   :initform (required-argument)
+                   :accessor existing-readtable-name
+                   :type named-readtable-designatord))
   (:report (lambda (condition stream)
              (format stream "A readtable named ~S already exists."
-                     (existing-readtable-name  condition)))))
+                     (existing-readtable-name condition)))))
 
 
 ;;; Although there is no way to get at the standard readtable in
@@ -319,7 +325,7 @@ guaranteed to be fresh, but may contain duplicates."
   (cond ((eq reserved-name nil)       *standard-readtable*)
 	((eq reserved-name :standard) *standard-readtable*)
 	((eq reserved-name :current)  *readtable*)
-	(t (error "No such reserved readtable: ~S" reserved-name))))
+	(t (error "Bug: no such reserved readtable: ~S" reserved-name))))
 
 (defun find-readtable (named-readtable-designator)
   "Looks for the readtable specified by NAMED-READTABLE-DESIGNATOR and 
@@ -345,7 +351,7 @@ is signalled."
   (symbol-macrolet ((designator named-readtable-designator))
     (cond ((find-readtable designator))
 	  ((not default-p)
-	   (error "The name ~S does not designate any readtable." designator))
+	   (error 'readtable-does-not-exist :readtable-name designator))
 	  (t (setf (find-readtable designator) (ensure-readtable default))))))
 
 

@@ -21,3 +21,5 @@
    #:readtable-does-not-exist
    #:readtable-does-already-exist
    ))
+
+(pushnew :named-readtables *features*)

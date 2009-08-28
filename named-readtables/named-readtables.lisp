@@ -28,8 +28,6 @@
 ;;;
 ;;;    * Add :FUZE that's like :MERGE without the style-warnings
 ;;;
-;;;    * Revamp cruft.lisp, introduce DEFINTERFACE, DEFIMPLEMENTATION
-;;;
 ;;;    * Think about MAKE-DISPATCHING-MACRO-CHARACTER in DEFREADTABLE
 
 
@@ -99,32 +97,37 @@ they appear."
 	    ((not (null other-clauses))
 	     (error "Bogus DEFREADTABLE clauses: ~{~A~^, ~}" other-clauses))
 	    (t
-	     `(eval-when (:compile-toplevel :load-toplevel :execute)
+	     `(eval-when (:load-toplevel :execute)
 		;; The (FIND-READTABLE ...) is important for proper redefinition semantics.
-		(let ((readtable (find-readtable ',name)))
-		  (if readtable
-		      (simple-style-warn "redefining ~A in DEFREADTABLE" ',name)
-		      (setq readtable
-			    (make-readtable ',name
-					    ;; We have to provide an explicit :MERGE argument,
-					    ;; because otherwise the :STANDARD readtable would
-					    ;; be used which is not necessarily what we want.
-					    :merge ',(rest (first merge-clauses)))))
-		  ;; We have to grovel all MERGE-CLAUSES for the redefinition case.
-		  ,@(loop for option in merge-clauses
-			  collect (process-option option 'readtable))
-		  ,@(loop for option in case-clauses
-			  collect (process-option option 'readtable))
-		  ,@(loop for option in macro-clauses
-			  collect (process-option option 'readtable))
-		  readtable)))))))
+		(handler-bind ((readtable-does-already-exist
+				#'(lambda (c)
+				    (simple-style-warn 
+				     "Overwriting previously existing readtable ~S."
+				     (existing-readtable-name c))
+				    (continue c))))
+		  (let ((readtable (find-readtable ',name)))
+		    (setq readtable
+			  (make-readtable ',name
+					  ;; We have to provide an explicit :MERGE argument,
+					  ;; because otherwise the :STANDARD readtable would
+					  ;; be used which is not necessarily what we want.
+					  :merge ',(rest (first merge-clauses))))
+		    ;; We have to grovel all MERGE-CLAUSES for the redefinition case.
+		    ,@(loop for option in merge-clauses
+			    collect (process-option option 'readtable))
+		    ,@(loop for option in case-clauses
+			    collect (process-option option 'readtable))
+		    ,@(loop for option in macro-clauses
+			    collect (process-option option 'readtable))
+		    readtable))))))))
 
 ;;; KLUDGE:
 ;;;   We need support for this in Slime itself, because we want IN-READTABLE
 ;;;   to work on a per-file basis, and not on a per-package basis.
 ;;; 
 (defun %frob-swank-readtable-alist (package readtable)
-  (let ((readtable-alist (find-symbol "*READTABLE-ALIST*" (find-package "SWANK"))))
+  (let ((readtable-alist (find-symbol (string '#:*readtable-alist*) 
+				      (find-package :swank))))
     (when (boundp readtable-alist)
       (pushnew (cons (package-name package) readtable)
 	       (symbol-value readtable-alist)
@@ -140,7 +143,7 @@ an error if no such readtable can be found."
   (check-type name symbol)
   `(eval-when (:compile-toplevel :load-toplevel :execute)
      (setf *readtable* (ensure-readtable ',name))
-     (when (find-package "SWANK")
+     (when (find-package :swank)
        (%frob-swank-readtable-alist *package* *readtable*))
      ))
 
@@ -155,9 +158,9 @@ the :STANDARD readtable is used instead."
     (cond ((reserved-readtable-name-p name)
 	   (error "~A is the designator for a predefined readtable. ~
                    Not acceptable as a user-specified readtable name." name))
-	  ((and (find-readtable name)
-		(cerror "Overwrite existing readtable."
-			"A readtable named ~S already exists." name)))
+	  ((let ((rt (find-readtable name)))
+	     (and rt (cerror "Overwrite existing readtable." 
+			     'readtable-does-already-exist :readtable rt))))
 	  (t (let ((result (apply #'merge-readtables-into
 				  ;; The first readtable specified in the :merge list is
 				  ;; taken as the basis for all subsequent (destructive!)
@@ -220,6 +223,23 @@ guaranteed to be fresh, but may contain duplicates."
 (deftype named-readtable-designator ()
   `(or readtable-designator symbol))
 
+
+(define-condition readtable-error (error) ())
+
+(define-condition readtable-does-not-exist (readtable-error)
+  ((readtable-name :initarg :readtable-name 
+	           :initform (required-argument)
+	           :accessor missing-readtable-name)))
+
+(define-condition readtable-does-already-exist (readtable-error)
+  ((readtable-name :initarg :readtable 
+		   :initform (required-argument)
+		   :accessor existing-readtable-name))
+  (:report (lambda (condition stream)
+             (format stream "A readtable named ~S already exists."
+                     (existing-readtable-name  condition)))))
+
+
 ;;; Although there is no way to get at the standard readtable in
 ;;; Common Lisp (cf. /standard readtable/, CLHS glossary), we make
 ;;; up the perception of its existence by interning a copy of it.

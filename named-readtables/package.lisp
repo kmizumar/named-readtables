@@ -1,5 +1,5 @@
 
-(in-package "COMMON-LISP-USER")
+(in-package :common-lisp-user)
 
 (defpackage :editor-hints.named-readtables
   (:use :common-lisp)
@@ -15,5 +15,9 @@
    #:register-readtable
    #:unregister-readtable
    #:list-all-named-readtables
+   ;; Types
    #:named-readtable-designator
+   ;; Conditions
+   #:readtable-does-not-exist
+   #:readtable-does-already-exist
    ))

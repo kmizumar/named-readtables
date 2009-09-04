@@ -34,55 +34,63 @@
 ;;;;;; DEFREADTABLE &c.
 
 (defmacro defreadtable (name &body options)
-  "Define a new named readtable, whose name is given by the symbol NAME.
-Or, if a readtable is already registered under that name, redefine that one.
+  "Define a new named readtable, whose name is given by the symbol `name'.
+Or, if a readtable is already registered under that name, redefine that
+one.
 
-The readtable can be populated using the following OPTIONS:
+The readtable can be populated using the following `options':
 
-  (:MERGE &REST READTABLE-DESIGNATORS) 
+  (:MERGE `readtable-designators'+)
 
       Merge the readtables designated into the new readtable, using
-      `merge-readtables-into'.  It is mandatory to supply at least one :MERGE
+      MERGE-READTABLES-INTO. It is mandatory to supply at least one :MERGE
       clause.
  
-      DEFREADTABLE accepts some special readtable designators, including NIL
-      or :STANDARD for the standard readtable and :CURRENT for the current
-      readtable, as well as the names of programmer-defined readtables.
+      DEFREADTABLE accepts some special readtable designators, including
+      NIL or :STANDARD for the standard readtable and :CURRENT for the
+      current readtable, as well as the names of programmer-defined
+      readtables.
 
-      Note that the process of merging readtables is _not_ commutative, so that
-      macros in later entries will overwrite earlier ones.
+      Note that the process of merging readtables is _not_ commutative, so
+      that reader macros in earlier entries will be overwritten by later
+      ones.
 
-  (:DISPATCH-MACRO-CHAR MACRO-CHAR SUB-CHAR FUNCTION)
+  (:DISPATCH-MACRO-CHAR `macro-char' `sub-char' `function')
 
-      Define a new sub character SUB-CHAR for the dispatching macro character
-      MACRO-CHAR, per `set-dispatch-macro-character'. You probably have to
-      define MACRO-CHAR as a dispatching macro character by the following option
-      first.
+      Define a new sub character `sub-char' for the dispatching macro
+      character `macro-char', per SET-DISPATCH-MACRO-CHARACTER. You
+      probably have to define `macro-char' as a dispatching macro character
+      by the following option first.
 
-  (:MACRO-CHAR MACRO-CHAR FUNCTION &OPTIONAL NON-TERMINATING-P)
+  (:MACRO-CHAR `macro-char' `function' [`non-terminating-p'])
 
-      Define a new macro character in the readtable, per `set-macro-character'.
-      If FUNCTION is the keyword :DISPATCH, MACRO-CHAR is made a dispatching
-      macro character, per `make-dispatch-macro-character'.
+      Define a new macro character in the readtable, per SET-MACRO-CHARACTER.
+      If `function' is the keyword :DISPATCH, `macro-char' is made a dispatching
+      macro character, per MAKE-DISPATCH-MACRO-CHARACTER.
 
-  (:SYNTAX-FROM FROM-READTABLE-DESIGNATOR FROM-CHAR TO-CHAR)
+  (:SYNTAX-FROM `from-readtable-designator' `from-char' `to-char')
 
-      Set the character syntax of TO-CHAR in the readtable being defined to the
-      same syntax as FROM-CHAR in FROM-READTABLE-DESIGNATOR as per
-      `set-syntax-from-char'.
+      Set the character syntax of `to-char' in the readtable being defined
+      to the same syntax as `from-char' as per SET-SYNTAX-FROM-CHAR.
 
-  (:CASE CASE-MODE) 
+  (:CASE `case-mode') 
 
-      Defines the /case sensititivy mode/ of the resulting readtable.
+      Defines the /case sensitivity mode/ of the resulting readtable.
 
 Any number of option clauses may appear. The options are grouped by their
-type, but in each group the textual order the options appeared is preserved.
-The following groups exist and are executed in this order: :MERGE, :CASE, 
-:MACRO-CHAR and :DISPATCH-MACRO-CHAR (one group), finally :SYNTAX-FROM.
+type, but in each group the order the options appeared textually is
+preserved.  The following groups exist and are executed in the following
+order: :MERGE, :CASE, :MACRO-CHAR and :DISPATCH-MACRO-CHAR (one group),
+finally :SYNTAX-FROM.
 
-The readtable is defined at load-time. If you want to have it available at
-compilation time -- say to use its reader-macros in the same file as its
-definition -- you have to wrap the DEFREADTABLE form in an explicit EVAL-WHEN.
+Notes:
+
+  The readtable is defined at load-time. If you want to have it available
+  at compilation time -- say to use its reader-macros in the same file as
+  its definition -- you have to wrap the DEFREADTABLE form in an explicit
+  EVAL-WHEN.
+
+  NIL, :STANDARD, and :CURRENT are preregistered readtable names.
 "
   (check-type name symbol)
   (when (reserved-readtable-name-p name)
@@ -153,8 +161,7 @@ definition -- you have to wrap the DEFREADTABLE form in an explicit EVAL-WHEN.
 		readtable))))))))
 
 (defmacro in-readtable (name)
-  "Bind the *readtable* to the readtable referred to by NAME, raising
-an error if no such readtable can be found."
+  "Bind *READTABLE* to the readtable referred to by the symbol `name'."
   (check-type name symbol)
   `(eval-when (:compile-toplevel :load-toplevel :execute)
      (setf *readtable* (ensure-readtable ',name))
@@ -180,11 +187,12 @@ an error if no such readtable can be found."
 
 
 (defun make-readtable (name &key merge)
-  "Makes and returns a new readtable under the specified NAME. The
-keyarg :MERGE takes a list of named-readtable-designators and specifies
-the readtables the new readtable is created from. (See the :MERGE
-clauses of DEFREADTABLE for details.) If :MERGE wasn't given (or NIL),
-the :STANDARD readtable is used instead."
+  "Creates and returns a new readtable under the specified `name'.
+
+`merge' takes a list of NAMED-READTABLE-DESIGNATORS and specifies the
+readtables the new readtable is created from. (See the :MERGE clauses of
+DEFREADTABLE for details.) If :MERGE wasn't given (or NIL), the :STANDARD
+readtable is used instead."
   (let ((merge-list (or merge '(:standard))))
     (check-type merge-list list)
     (cond ((reserved-readtable-name-p name)
@@ -203,8 +211,8 @@ the :STANDARD readtable is used instead."
 
 (defun rename-readtable (named-readtable-designator new-name)
   "Replaces the associated name of the readtable designated by
-NAMED-READTABLE-DESIGNATOR with NEW-NAME If a readtable is already
-registered under the new name, an error is raised."
+`named-readtable-designator' with `new-name'. If a readtable is already
+registered under `new-name', an error is raised."
   (check-type named-readtable-designator named-readtable-designator)
   (check-type new-name symbol)
   (when (find-readtable new-name)
@@ -221,11 +229,11 @@ registered under the new name, an error is raised."
     read-table))
 
 (defun merge-readtables-into (result-table &rest named-readtable-designators)
-  "Copy the contents of each readtable in NAMED-READTABLE-DESIGNATORS,
-in turn, into RESULT-TABLE.  Because the readtables are merged in
-turn, macro definitions in readtables later in the list will overwrite
-definitions in readtables listed earlier.  Notice that the /readtable
-case/ is also subject of the merge operation."
+  "Copy the contents of each readtable in `named-readtable-designators'
+into `result-table'. Because the readtables are merged in turn, macro
+definitions in readtables appearing later in the list will overwrite
+reader-macros appearing earlier.  Notice that the /readtable case/ is also
+subject of the merge operation."
   (flet ((merge-into (rt1 rt2)
 	   (with-readtable-iterator (rt2-iter rt2)
 	     (loop
@@ -254,6 +262,7 @@ guaranteed to be fresh, but may contain duplicates."
   `(or null readtable))
 
 (deftype named-readtable-designator ()
+  "Either a symbol or a readtable itself."
   `(or readtable-designator symbol))
 
 
@@ -328,7 +337,7 @@ guaranteed to be fresh, but may contain duplicates."
 	(t (error "Bug: no such reserved readtable: ~S" reserved-name))))
 
 (defun find-readtable (named-readtable-designator)
-  "Looks for the readtable specified by NAMED-READTABLE-DESIGNATOR and 
+  "Looks for the readtable specified by `named-readtable-designator' and
 returns it if it is found. Returns NIL otherwise."
   (check-type named-readtable-designator named-readtable-designator)
   (symbol-macrolet ((designator named-readtable-designator))
@@ -343,11 +352,11 @@ returns it if it is found. Returns NIL otherwise."
 (defsetf find-readtable register-readtable)
 
 (defun ensure-readtable (named-readtable-designator &optional (default nil default-p))
-  "Looks up the readtable specified by NAMED-READTABLE-DESIGNATOR and
-returns it if it is found.  If it is not found, it registers the
-readtable designated by DEFAULT under the name represented by
-NAMED-READTABLE-DESIGNATOR. If no default argument was given, an error
-is signalled."
+  "Looks up the readtable specified by `named-readtable-designator' and
+returns it if it is found.  If it is not found, it registers the readtable
+designated by `default' under the name represented by
+`named-readtable-designator'. If no default argument is given, an error is
+signalled in this case."
   (symbol-macrolet ((designator named-readtable-designator))
     (cond ((find-readtable designator))
 	  ((not default-p)
@@ -356,7 +365,7 @@ is signalled."
 
 
 (defun register-readtable (name read-table)
-  "Associate READ-TABLE as the readtable associated with NAME."
+  "Associate `read-table' with `name'."
   (check-type name symbol)
   (check-type read-table readtable)
   (check-type name (not (satisfies reserved-readtable-name-p)))
@@ -365,8 +374,8 @@ is signalled."
   read-table)
 
 (defun unregister-readtable (named-readtable-designator)
-  "Remove the readtable association of NAMED-READTABLE-DESIGNATOR.
-Returns T if successfull, NIL otherwise."
+  "Remove the association of `named-readtable-designator'. Returns T if
+successfull, NIL otherwise."
   (let* ((read-table (ensure-readtable named-readtable-designator))
 	 (read-table-name (readtable-name read-table)))
     (if (not read-table-name)
@@ -378,7 +387,7 @@ Returns T if successfull, NIL otherwise."
 
 (defun readtable-name (named-readtable-designator)
   "Returns the name of the readtable designated by
-NAMED-READTABLE-DESIGNATOR or NIL."
+`named-readtable-designator', or NIL."
   (check-type named-readtable-designator named-readtable-designator)
   (let ((read-table (ensure-readtable named-readtable-designator)))
     (cond ((%readtable-name read-table))

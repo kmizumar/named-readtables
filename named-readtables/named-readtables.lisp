@@ -84,8 +84,7 @@ Notes:
   its definition -- you have to wrap the DEFREADTABLE form in an explicit
   EVAL-WHEN.
 
-  NIL, :STANDARD, :EMPTY, and :CURRENT are preregistered readtable
-  names.
+  NIL, :STANDARD, and :CURRENT are preregistered readtable names.
 "
   (check-type name symbol)
   (when (reserved-readtable-name-p name)
@@ -147,7 +146,7 @@ Notes:
 		readtable))))))))
 
 (defmacro in-readtable (name)
-  "Bind *READTABLE* to the readtable referred to by the symbol `name'."
+  "Set *READTABLE* to the readtable referred to by the symbol `name'."
   (check-type name symbol)
   `(eval-when (:compile-toplevel :load-toplevel :execute)
      (setf *readtable* (ensure-readtable ',name))
@@ -171,15 +170,22 @@ Notes:
 			     (and (string= pkg-name1 pkg-name2)
 				  (eq rt1 rt2)))))))))
 
+
 
+(declaim (special *standard-readtable* *empty-readtable*))
+
 (defun make-readtable (name &key merge)
   "Creates and returns a new readtable under the specified `name'.
 
 `merge' takes a list of NAMED-READTABLE-DESIGNATORS and specifies the
-readtables the new readtable is created from. (See the :MERGE clause of
-DEFREADTABLE for details.) If `merge' wasn't given (or NIL), the :EMPTY
-readtable is used instead."
-  (let ((merge-list (or merge '(:empty))))
+readtables the new readtable is created from. (See the :MERGE clause
+of DEFREADTABLE for details.) If `merge' is NIL, an empty readtable is
+used instead.
+
+An empty readtable is a readtable where the character syntax of each
+character is like in the /standard readtable/ except that each
+standard macro character has been made a constituent."
+  (let ((merge-list merge))
     (check-type merge-list list)
     (cond ((reserved-readtable-name-p name)
 	   (error "~A is the designator for a predefined readtable. ~
@@ -191,7 +197,9 @@ readtable is used instead."
 				  ;; The first readtable specified in the :merge list is
 				  ;; taken as the basis for all subsequent (destructive!)
 				  ;; modifications (and hence it's copied.)
-				  (copy-readtable (ensure-readtable (first merge-list)))
+				  (copy-readtable (if merge
+                                                      (ensure-readtable (first merge-list))
+                                                      *empty-readtable*))
 				  (rest merge-list))))
 	       (register-readtable name result))))))
 
@@ -234,6 +242,19 @@ subject of the merge operation."
     (dolist (table (mapcar #'ensure-readtable named-readtable-designators))
       (merge-into result-table table))
     result-table))
+
+(defun standard-macro-char-p (char rt)
+  (multiple-value-bind (rt-fn rt-flag) (get-macro-character char rt)
+    (multiple-value-bind (std-fn std-flag) (get-macro-character char *standard-readtable*)
+      (and (eq rt-fn std-fn)
+	   (eq rt-flag std-flag)))))
+
+(defun standard-dispatch-macro-char-p (disp-char sub-char rt)
+  (flet ((non-terminating-p (ch rt) (nth-value 1 (get-macro-character ch rt))))
+    (and (eq (non-terminating-p disp-char rt)
+	     (non-terminating-p disp-char *standard-readtable*))
+	 (eq (get-dispatch-macro-character disp-char sub-char rt)
+	     (get-dispatch-macro-character disp-char sub-char *standard-readtable*)))))
 
 (defun list-all-named-readtables ()
   "Returns a list of all registered readtables. The returned list is
@@ -300,20 +321,7 @@ guaranteed to be fresh, but may contain duplicates."
     #+sbcl (setf (sb-impl::dispatch-tables readtable) nil)
     readtable))
 
-(defun standard-macro-char-p (char rt)
-  (multiple-value-bind (rt-fn rt-flag) (get-macro-character char rt)
-    (multiple-value-bind (std-fn std-flag) (get-macro-character char *standard-readtable*)
-      (and (eq rt-fn std-fn)
-	   (eq rt-flag std-flag)))))
-
-(defun standard-dispatch-macro-char-p (disp-char sub-char rt)
-  (flet ((non-terminating-p (ch rt) (nth-value 1 (get-macro-character ch rt))))
-    (and (eq (non-terminating-p disp-char rt)
-	     (non-terminating-p disp-char *standard-readtable*))
-	 (eq (get-dispatch-macro-character disp-char sub-char rt)
-	     (get-dispatch-macro-character disp-char sub-char *standard-readtable*)))))
-
-(defparameter *reserved-readtable-names* '(nil :standard :current :empty))
+(defparameter *reserved-readtable-names* '(nil :standard :current))
 
 (defun reserved-readtable-name-p (name)
   (and (member name *reserved-readtable-names*) t))
@@ -325,7 +333,6 @@ guaranteed to be fresh, but may contain duplicates."
 (defun find-reserved-readtable (reserved-name)
   (cond ((eq reserved-name nil)       *standard-readtable*)
 	((eq reserved-name :standard) *standard-readtable*)
-        ((eq reserved-name :empty)    *empty-readtable*)
 	((eq reserved-name :current)  *readtable*)
 	(t (error "Bug: no such reserved readtable: ~S" reserved-name))))
 
@@ -386,7 +393,6 @@ successfull, NIL otherwise."
     (cond ((%readtable-name read-table))
           ((eq read-table *readtable*)          :current)
 	  ((eq read-table *standard-readtable*) :standard)
-          ((eq read-table *empty-readtable*)    :empty)
 	  (t nil))))
 
 

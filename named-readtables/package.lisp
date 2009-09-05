@@ -152,11 +152,6 @@
 
     - :CURRENT designates the /current readtable/.
 
-    - :EMPTY designates an empty readtable. That is a readtable where
-      the character syntax of each character is like in the /standard
-      readtable/ except that each standard macro character has been
-      made a constituent.
-
 * Examples
 
     > (defreadtable elisp:syntax

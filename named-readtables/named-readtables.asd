@@ -7,6 +7,7 @@
   :serial t
   :components
   ((:file "package")
-   (:file "utils"            :depends-on ("package"))
-   (:file "cruft"            :depends-on ("package" "utils"))
-   (:file "named-readtables" :depends-on ("package" "utils" "cruft"))))
+   (:file "without-package-locks" :depends-on ("package"))
+   (:file "utils"                 :depends-on ("package" "without-package-locks"))
+   (:file "cruft"                 :depends-on ("package" "utils"))
+   (:file "named-readtables"      :depends-on ("package" "utils" "cruft"))))

@@ -253,12 +253,11 @@
 
 ;;; We don't need this on Allegro CL's as we hook into their
 ;;; named-readtable facility, and they provide such a method already.
-
-;; FIXME: This may violate package locks.
 #-allegro
-(defmethod print-object :around ((rt readtable) stream)
-  (let ((name (readtable-name rt)))
-    (if name
-	(print-unreadable-object (rt stream :type nil :identity t)
-	  (format stream "~A ~S" (string :named-readtable) name))
-	(call-next-method))))
+(without-package-lock (:common-lisp)
+  (defmethod print-object :around ((rt readtable) stream)
+    (let ((name (readtable-name rt)))
+      (if name
+          (print-unreadable-object (rt stream :type nil :identity t)
+            (format stream "~A ~S" (string :named-readtable) name))
+          (call-next-method)))))

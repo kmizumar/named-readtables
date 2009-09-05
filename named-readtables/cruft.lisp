@@ -20,7 +20,7 @@
                             (find-package "SB-IMPL"))
            (pushnew :sbcl+safe-standard-readtable *features*)))
 
-
+
 ;;;;; Implementation-dependent cruft
 
 
@@ -33,7 +33,7 @@
   #+ :sbcl+safe-standard-readtable sb-impl::*standard-readtable*
   #+ :common-lisp                  (copy-readtable nil))
 
-
+
 ;;;; Mapping between a readtable object and its readtable-name.
 
 (defvar *readtable-names* (make-hash-table :test 'eq))
@@ -57,7 +57,7 @@
                          (loop for name being each hash-value of *readtable-names*
                                collect name)))
 
-
+
 ;;;; Mapping between a readtable-name and the actual readtable object.
 
 ;;; On Allegro we reuse their named-readtable support so we work
@@ -99,7 +99,7 @@
   #+ :allegro     (excl:named-readtable (readtable-name-for-allegro name))
   #+ :common-lisp (values (gethash name *named-readtables* nil)))
 
-
+
 ;;;; Readtables Iterators
 
 (defmacro with-readtable-iterator ((name readtable) &body body)
@@ -223,7 +223,27 @@
                      (error () nil))
                  (return (values t char fn disp? alist)))))))))
 
+(defmacro do-readtable ((entry-designator readtable &optional result)
+                        &body body)
+  "Iterate through a readtable's macro characters, and dispatch macro characters."
+  (destructuring-bind (char &optional reader-fn disp? table)
+      (if (symbolp entry-designator)
+          (list entry-designator)
+          entry-designator)
+    (let ((iter (gensym "ITER+"))
+          (more? (gensym "MORE?+")))
+      `(with-readtable-iterator (,iter ,readtable)
+         (loop
+          (multiple-value-bind (,more?
+                                ,char
+                                ,@(when reader-fn (list reader-fn))
+                                ,@(when disp? (list disp?))
+                                ,@(when table (list table)))
+              (,iter)
+            (unless ,more? (return ,result))
+            ,@body))))))
 
+
 ;;;; Specialized PRINT-OBJECT for named readtables.
 
 ;;; As per #19 in CLHS 11.1.2.1.2 defining a method for PRINT-OBJECT

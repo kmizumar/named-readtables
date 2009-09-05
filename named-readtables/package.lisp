@@ -31,7 +31,7 @@
   particular:
 
      * you can associate readtables with names, and retrieve
-       readtables from their names;
+       readtables by names;
 
      * you can associate source files with readtable names, and be
        sure that the right readtable is active when compiling/loading
@@ -39,7 +39,8 @@
 
      * similiarly, your development environment now has a chance to
        automatically determine what readtable should be active while
-       processing source forms on interactive commands.
+       processing source forms on interactive commands. (E.g. think of
+       `C-c C-c' in Slime [yet to be done])
 
   It follows that Named-Readtables is a facility for using readtables in
   a localized way.
@@ -47,17 +48,17 @@
   Additionally, it also attempts to become a facility for using
   readtables in a /modular/ way. In particular:
 
-     * it provides a convenience macro to specify the whole content of
-       a readtable at one sight.
+     * it provides a macro to specify the content of a readtable at a
+       glance;
 
-     * it supports multiple inheritance.
+     * it makes it possible to use multiple inheritance between readtables.
 
 
 * Notes on the API
 
   The API heavily imitates the API of packages. This has the nice
-  property that any experienced Common Lisper will take it up totally
-  effortless.
+  property that any experienced Common Lisper will take it up without
+  effort.
 
       DEFREADTABLE              -   DEFPACKAGE
 
@@ -150,6 +151,11 @@
     - NIL, and :STANDARD designate the /standard readtable/.
 
     - :CURRENT designates the /current readtable/.
+
+    - :EMPTY designates an empty readtable. That is a readtable where
+      the character syntax of each character is like in the /standard
+      readtable/ except that each standard macro character has been
+      made a constituent.
 
 * Examples
 

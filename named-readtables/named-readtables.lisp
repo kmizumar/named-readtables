@@ -43,14 +43,8 @@ The readtable can be populated using the following `options':
   (:MERGE `readtable-designators'+)
 
       Merge the readtables designated into the new readtable, using
-      MERGE-READTABLES-INTO. It is mandatory to supply at least one :MERGE
-      clause.
+      MERGE-READTABLES-INTO.
  
-      DEFREADTABLE accepts some special readtable designators, including
-      NIL or :STANDARD for the standard readtable and :CURRENT for the
-      current readtable, as well as the names of programmer-defined
-      readtables.
-
       Note that the process of merging readtables is _not_ commutative, so
       that reader macros in earlier entries will be overwritten by later
       ones.
@@ -90,7 +84,8 @@ Notes:
   its definition -- you have to wrap the DEFREADTABLE form in an explicit
   EVAL-WHEN.
 
-  NIL, :STANDARD, and :CURRENT are preregistered readtable names.
+  NIL, :STANDARD, :EMPTY, and :CURRENT are preregistered readtable
+  names.
 "
   (check-type name symbol)
   (when (reserved-readtable-name-p name)
@@ -127,10 +122,8 @@ Notes:
 					   (append merge-clauses case-clauses 
 						   macro-clauses syntax-clauses))))
       (cond 
-	((null merge-clauses)
-	 (error "You must specify at least one :MERGE clause in DEFREADTABLE."))
 	((not (null other-clauses))
-	 (error "Bogus DEFREADTABLE clauses: ~{~A~^, ~}" other-clauses))
+	 (error "Bogus DEFREADTABLE clauses: ~/PPRINT-LINEAR/" other-clauses))
 	(t
 	 `(eval-when (:load-toplevel :execute)
 	    (handler-bind ((readtable-does-already-exist
@@ -141,15 +134,8 @@ Notes:
 				(continue c))))
 	      ;; The (FIND-READTABLE ...) is important for proper redefinition
 	      ;; semantics.
-	      (let ((readtable (find-readtable ',name)))
-		(setq readtable
-		      (make-readtable ',name
-				      ;; We have to provide an explicit :MERGE
-				      ;; argument, because otherwise the
-				      ;; :STANDARD readtable would be used which
-				      ;; is not necessarily what we want.
-				      :merge ',(rest (first merge-clauses))))
-		;; We have to grovel all MERGE-CLAUSES for the redefinition case.
+	      (let ((readtable (or (find-readtable ',name)
+                                   (make-readtable ',name))))
 		,@(loop for option in merge-clauses
 			collect (process-option option 'readtable))
 		,@(loop for option in case-clauses
@@ -190,10 +176,10 @@ Notes:
   "Creates and returns a new readtable under the specified `name'.
 
 `merge' takes a list of NAMED-READTABLE-DESIGNATORS and specifies the
-readtables the new readtable is created from. (See the :MERGE clauses of
-DEFREADTABLE for details.) If :MERGE wasn't given (or NIL), the :STANDARD
+readtables the new readtable is created from. (See the :MERGE clause of
+DEFREADTABLE for details.) If `merge' wasn't given (or NIL), the :EMPTY
 readtable is used instead."
-  (let ((merge-list (or merge '(:standard))))
+  (let ((merge-list (or merge '(:empty))))
     (check-type merge-list list)
     (cond ((reserved-readtable-name-p name)
 	   (error "~A is the designator for a predefined readtable. ~
@@ -235,17 +221,14 @@ definitions in readtables appearing later in the list will overwrite
 reader-macros appearing earlier.  Notice that the /readtable case/ is also
 subject of the merge operation."
   (flet ((merge-into (rt1 rt2)
-	   (with-readtable-iterator (rt2-iter rt2)
-	     (loop
-	      (multiple-value-bind (more? char reader-fn disp? table) (rt2-iter)
-		(unless more? (return))
-		(unless (standard-macro-char-p char rt2)
-		  (let ((non-terminating-p (nth-value 1 (get-macro-character char rt2))))
-		    (set-macro-character char reader-fn non-terminating-p rt1)))
-		(when disp?
-		  (loop for (subchar . subfn) in table do
-			(unless (standard-dispatch-macro-char-p char subchar rt2)
-			  (set-dispatch-macro-character char subchar subfn rt1)))))))
+	   (do-readtable ((char reader-fn disp? table) rt2)
+             (unless (standard-macro-char-p char rt2)
+               (let ((non-terminating-p (nth-value 1 (get-macro-character char rt2))))
+                 (set-macro-character char reader-fn non-terminating-p rt1)))
+             (when disp?
+               (loop for (subchar . subfn) in table do
+                     (unless (standard-dispatch-macro-char-p char subchar rt2)
+                       (set-dispatch-macro-character char subchar subfn rt1)))))
 	   rt1))
     (setf result-table (ensure-readtable result-table))
     (dolist (table (mapcar #'ensure-readtable named-readtable-designators))
@@ -308,6 +291,15 @@ guaranteed to be fresh, but may contain duplicates."
 ;;;
 (defvar *standard-readtable* (%standard-readtable))
 
+(defvar *empty-readtable*
+  (let ((readtable (copy-readtable nil)))
+    (do-readtable (char readtable)
+      (set-syntax-from-char char #\A readtable (%standard-readtable)))
+    ;; Alas, on SBCL, SET-SYNTAX-FROM-CHAR does not get rid of a
+    ;; readtable's dispatch table properly.
+    #+sbcl (setf (sb-impl::dispatch-tables readtable) nil)
+    readtable))
+
 (defun standard-macro-char-p (char rt)
   (multiple-value-bind (rt-fn rt-flag) (get-macro-character char rt)
     (multiple-value-bind (std-fn std-flag) (get-macro-character char *standard-readtable*)
@@ -321,7 +313,7 @@ guaranteed to be fresh, but may contain duplicates."
 	 (eq (get-dispatch-macro-character disp-char sub-char rt)
 	     (get-dispatch-macro-character disp-char sub-char *standard-readtable*)))))
 
-(defparameter *reserved-readtable-names* '(nil :standard :current))
+(defparameter *reserved-readtable-names* '(nil :standard :current :empty))
 
 (defun reserved-readtable-name-p (name)
   (and (member name *reserved-readtable-names*) t))
@@ -333,6 +325,7 @@ guaranteed to be fresh, but may contain duplicates."
 (defun find-reserved-readtable (reserved-name)
   (cond ((eq reserved-name nil)       *standard-readtable*)
 	((eq reserved-name :standard) *standard-readtable*)
+        ((eq reserved-name :empty)    *empty-readtable*)
 	((eq reserved-name :current)  *readtable*)
 	(t (error "Bug: no such reserved readtable: ~S" reserved-name))))
 
@@ -393,6 +386,7 @@ successfull, NIL otherwise."
     (cond ((%readtable-name read-table))
           ((eq read-table *readtable*)          :current)
 	  ((eq read-table *standard-readtable*) :standard)
+          ((eq read-table *empty-readtable*)    :empty)
 	  (t nil))))
 
 

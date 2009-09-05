@@ -49,6 +49,9 @@ The readtable can be populated using the following `options':
       that reader macros in earlier entries will be overwritten by later
       ones.
 
+      If no :MERGE clause is given, an empty readtable is used. See
+      MAKE-READTABLE.
+
   (:DISPATCH-MACRO-CHAR `macro-char' `sub-char' `function')
 
       Define a new sub character `sub-char' for the dispatching macro

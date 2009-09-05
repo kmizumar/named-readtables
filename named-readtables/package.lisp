@@ -46,7 +46,7 @@
   a localized way.
 
   Additionally, it also attempts to become a facility for using
-  readtables in a /modular/ way. In particular:
+  readtables in a _modular_ way. In particular:
 
      * it provides a macro to specify the content of a readtable at a
        glance;

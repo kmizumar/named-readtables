@@ -1,3 +1,4 @@
+;;;; -*- Mode:Lisp -*-
 ;;;;
 ;;;; Copyright (c) 2007 - 2009 Tobias C. Rittweiler <tcr@freebits.de>
 ;;;; Copyright (c) 2007, Robert P. Goldman <rpgoldman@sift.info> and SIFT, LLC
@@ -87,7 +88,8 @@ Notes:
   its definition -- you have to wrap the DEFREADTABLE form in an explicit
   EVAL-WHEN.
 
-  NIL, :STANDARD, and :CURRENT are preregistered readtable names.
+  NIL, :STANDARD, :COMMON-LISP, :MODERN, and :CURRENT are
+  preregistered readtable names.
 "
   (check-type name symbol)
   (when (reserved-readtable-name-p name)
@@ -134,8 +136,9 @@ Notes:
 				 "Overwriting previously existing readtable ~S."
 				 (existing-readtable-name c))
 				(continue c))))
-	      ;; The (FIND-READTABLE ...) is important for proper redefinition
-	      ;; semantics.
+	      ;; The (FIND-READTABLE ...) is important for proper
+	      ;; redefinition semantics, as redefining has to modify the
+	      ;; already existing readtable object.
 	      (let ((readtable (or (find-readtable ',name)
                                    (make-readtable ',name))))
 		,@(loop for option in merge-clauses
@@ -152,6 +155,8 @@ Notes:
   "Set *READTABLE* to the readtable referred to by the symbol `name'."
   (check-type name symbol)
   `(eval-when (:compile-toplevel :load-toplevel :execute)
+     ;; NB. The :LOAD-TOPLEVEL is needed for cases like (DEFVAR *FOO*
+     ;; (GET-MACRO-CHARACTER #\"))
      (setf *readtable* (ensure-readtable ',name))
      (when (find-package :swank)
        (%frob-swank-readtable-alist *package* *readtable*))
@@ -209,7 +214,8 @@ standard macro character has been made a constituent."
 (defun rename-readtable (named-readtable-designator new-name)
   "Replaces the associated name of the readtable designated by
 `named-readtable-designator' with `new-name'. If a readtable is already
-registered under `new-name', an error is raised."
+registered under `new-name', an error of type READTABLE-DOES-ALREADY-EXIST
+is signaled."
   (check-type named-readtable-designator named-readtable-designator)
   (check-type new-name symbol)
   (when (find-readtable new-name)
@@ -229,9 +235,9 @@ registered under `new-name', an error is raised."
   "Copy the contents of each readtable in `named-readtable-designators'
 into `result-table'. Because the readtables are merged in turn, macro
 definitions in readtables appearing later in the list will overwrite
-reader-macros appearing earlier.  Notice that the /readtable case/ is also
-subject of the merge operation."
+reader-macros appearing earlier."
   (flet ((merge-into (rt1 rt2)
+           ;;; FIXME: document why STANDARD-FOO-CHAR-P
 	   (do-readtable ((char reader-fn disp? table) rt2)
              (unless (standard-macro-char-p char rt2)
                (let ((non-terminating-p (nth-value 1 (get-macro-character char rt2))))
@@ -291,7 +297,8 @@ guaranteed to be fresh, but may contain duplicates."
                    :type named-readtable-designatord))
   (:report (lambda (condition stream)
              (format stream "A readtable named ~S already exists."
-                     (existing-readtable-name condition)))))
+                     (existing-readtable-name condition))))
+  (:documentation "Continuable."))
 
 
 ;;; Although there is no way to get at the standard readtable in
@@ -319,24 +326,32 @@ guaranteed to be fresh, but may contain duplicates."
   (let ((readtable (copy-readtable nil)))
     (do-readtable (char readtable)
       (set-syntax-from-char char #\A readtable (%standard-readtable)))
-    ;; Alas, on SBCL, SET-SYNTAX-FROM-CHAR does not get rid of a
+    ;; FIXME: Alas, on SBCL, SET-SYNTAX-FROM-CHAR does not get rid of a
     ;; readtable's dispatch table properly.
     #+sbcl (setf (sb-impl::dispatch-tables readtable) nil)
     readtable))
 
-(defparameter *reserved-readtable-names* '(nil :standard :current))
+(defvar *case-preserving-standard-readtable*
+  (let ((readtable (copy-readtable nil)))
+    (setf (readtable-case readtable) :preserve)
+    readtable))
+
+(defparameter *reserved-readtable-names*
+  '(nil :standard :common-lisp :modern :current))
 
 (defun reserved-readtable-name-p (name)
   (and (member name *reserved-readtable-names*) t))
 
-;;; In principle, we could DEFREADTABLE :STANDARD. But we do reserved
-;;; readtable lookup seperately, since we can't register a readtable
-;;; for :CURRENT anyway.
+;;; In principle, we could DEFREADTABLE some of these. But we do
+;;; reserved readtable lookup seperately, since we can't register a
+;;; readtable for :CURRENT anyway.
 
 (defun find-reserved-readtable (reserved-name)
-  (cond ((eq reserved-name nil)       *standard-readtable*)
-	((eq reserved-name :standard) *standard-readtable*)
-	((eq reserved-name :current)  *readtable*)
+  (cond ((eq reserved-name nil)          *standard-readtable*)
+	((eq reserved-name :standard)    *standard-readtable*)
+        ((eq reserved-name :common-lisp) *standard-readtable*)
+        ((eq reserved-name :modern)      *case-preserving-standard-readtable*)
+	((eq reserved-name :current)     *readtable*)
 	(t (error "Bug: no such reserved readtable: ~S" reserved-name))))
 
 (defun find-readtable (named-readtable-designator)
@@ -358,8 +373,8 @@ returns it if it is found. Returns NIL otherwise."
   "Looks up the readtable specified by `named-readtable-designator' and
 returns it if it is found.  If it is not found, it registers the readtable
 designated by `default' under the name represented by
-`named-readtable-designator'. If no default argument is given, an error is
-signalled in this case."
+`named-readtable-designator'; or if no default argument is given, it
+signals an error of type READTABLE-DOES-NOT-EXIST instead."
   (symbol-macrolet ((designator named-readtable-designator))
     (cond ((find-readtable designator))
 	  ((not default-p)
@@ -394,8 +409,9 @@ successfull, NIL otherwise."
   (check-type named-readtable-designator named-readtable-designator)
   (let ((read-table (ensure-readtable named-readtable-designator)))
     (cond ((%readtable-name read-table))
-          ((eq read-table *readtable*)          :current)
-	  ((eq read-table *standard-readtable*) :standard)
+          ((eq read-table *readtable*) :current)
+	  ((eq read-table *standard-readtable*) :common-lisp)
+          ((eq read-table *case-preserving-standard-readtable*) :modern)
 	  (t nil))))
 
 

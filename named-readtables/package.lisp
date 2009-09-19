@@ -117,11 +117,11 @@
 
         (Such merging can more or less be implemented portably albeit
         at a certain cost. Most of the time, this cost manifests
-        itself at the time a readtable is defined, i.e. at
-        compile-time, and once for each definition, only, so it may
-        not bother you.  Nonetheless, we provide extra support for
-        Sbcl, ClozureCL, and AllegroCL at the moment. Patches for your
-        implementation of choice are welcome, of course.)
+        itself at the time a readtable is defined, i.e. once at
+        compile-time, so it may not bother you.  Nonetheless, we
+        provide extra support for Sbcl, ClozureCL, and AllegroCL at
+        the moment. Patches for your implementation of choice are
+        welcome, of course.)
 
    3. DEFREADTABLE does not have compile-time effects.
 
@@ -148,7 +148,9 @@
 
 * Preregistered Readtables
 
-    - NIL, and :STANDARD designate the /standard readtable/.
+    - NIL, :STANDARD, and :COMMON-LISP designate the /standard readtable/.
+
+    - :MODERM designates a _case-preserving_ /standard-readtable/.
 
     - :CURRENT designates the /current readtable/.
 
@@ -176,6 +178,14 @@
     > ...
     >
     > (in-readtable scheme:syntax)
+
+* Acknowledgements
+
+  Thanks to Robert Goldman for making me want to write this library.
+
+  Thanks to Stephen Compall, Ariel Badichi, David Lichteblau, Bart
+  Botta and David Crawford for being early adopters, providing
+  comments and bugfixes.
 "))
 
 (pushnew :named-readtables *features*)

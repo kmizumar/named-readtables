@@ -98,6 +98,44 @@
   "Return the readtable named NAME."
   #+ :allegro     (excl:named-readtable (readtable-name-for-allegro name))
   #+ :common-lisp (values (gethash name *named-readtables* nil)))
+
+;;;; Reader-macro related predicates
+
+(define-cruft dispatch-macro-char-p (char rt)
+  "Is CHAR a dispatch macro character in RT?"
+  ;; CCL has a bug that prevents the portable form below from
+  ;; working. Patch has been sent upstream. (2009-09-19.)
+  #+ :ccl
+  (let ((def (cdr (nth-value 1 (ccl::%get-readtable-char char rt)))))
+    (or (consp (cdr def))
+        (eq (car def) #'ccl::read-dispatch)))
+  #+ :common-lisp
+  (handler-case (prog1 t
+                  (get-dispatch-macro-character char #\x rt))
+    (error () nil)))
+
+;; (defun macro-char-p (char rt)
+;;   (let ((reader-fn (get-macro-character char rt)))
+;;     (and reader-fn
+;;          ;; Allegro stores READ-TOKEN as reader macro function of each
+;;          ;; constituent character.
+;;          #+allegro
+;;          (let ((read-token-fn
+;;                 (load-time-value (get-macro-character #\A *standard-readtable*))))
+;;            (not (eq reader-fn read-token-fn))))))
+
+;; (defun standard-macro-char-p (char rt)
+;;   (multiple-value-bind (rt-fn rt-flag) (get-macro-character char rt)
+;;     (multiple-value-bind (std-fn std-flag) (get-macro-character char *standard-readtable*)
+;;       (and (eq rt-fn std-fn)
+;; 	   (eq rt-flag std-flag)))))
+
+;; (defun standard-dispatch-macro-char-p (disp-char sub-char rt)
+;;   (flet ((non-terminating-p (ch rt) (nth-value 1 (get-macro-character ch rt))))
+;;     (and (eq (non-terminating-p disp-char rt)
+;; 	     (non-terminating-p disp-char *standard-readtable*))
+;; 	 (eq (get-dispatch-macro-character disp-char sub-char rt)
+;; 	     (get-dispatch-macro-character disp-char sub-char *standard-readtable*)))))
 
 
 ;;;; Readtables Iterators
@@ -193,12 +231,13 @@
 
 #-(or sbcl clozure allegro)
 (eval-when (:compile-toplevel)
-  (simple-style-warn
-   "~A hasn't been ported to ~A. ~
-    We fall back to a portable implementation of readtable iterators. ~
-    This implementation has to grovel through all available characters. ~
-    On Unicode-aware implementations this comes with some costs." 
-   (package-name *package*) (lisp-implementation-type)))
+  (let ((*print-pretty* t))
+    (simple-style-warn
+     "~@<~A hasn't been ported to ~A. ~
+       We fall back to a portable implementation of readtable iterators. ~
+       This implementation has to grovel through all available characters. ~
+       On Unicode-aware implementations this comes with some costs.~@:>" 
+     (package-name *package*) (lisp-implementation-type))))
 
 #-(or sbcl clozure allegro)
 (defun %make-readtable-iterator (readtable)
@@ -242,6 +281,19 @@
               (,iter)
             (unless ,more? (return ,result))
             ,@body))))))
+
+;;;; Misc
+
+(declaim (special *standard-readtable*))
+
+(defun %clear-readtable (readtable)
+  "Make all macro characters in READTABLE be consituents."
+  (do-readtable (char readtable)
+    (set-syntax-from-char char #\A readtable *standard-readtable*))
+  ;; FIXME: Alas, on SBCL, SET-SYNTAX-FROM-CHAR does not get rid of a
+  ;; readtable's dispatch table properly.
+  #+sbcl (setf (sb-impl::dispatch-tables readtable) nil)
+  readtable)
 
 
 ;;;; Specialized PRINT-OBJECT for named readtables.
@@ -259,5 +311,5 @@
     (let ((name (readtable-name rt)))
       (if name
           (print-unreadable-object (rt stream :type nil :identity t)
-            (format stream "~A ~S" (string :named-readtable) name))
+            (format stream "~A ~S" :named-readtable name))
           (call-next-method)))))

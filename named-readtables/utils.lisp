@@ -16,6 +16,14 @@
 	 :format-control format-control
 	 :format-arguments format-args))
 
+
+(defmacro without-package-lock ((&rest package-names) &body body)
+  (declare (ignorable package-names))
+  #+clisp (return-from without-package-lock
+            `(ext:without-package-lock (,@package-names) ,@body))
+  `(progn ,@body))
+
+
 ;;; Taken from SWANK (which is Public Domain.)
 
 (defmacro destructure-case (value &rest patterns)

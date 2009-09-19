@@ -19,8 +19,9 @@
    ;; Types
    #:named-readtable-designator
    ;; Conditions
-   #:readtable-does-not-exist
+   #:reader-macro-conflict
    #:readtable-does-already-exist
+   #:readtable-does-not-exist
    )
   (:documentation
    "
@@ -150,7 +151,7 @@
 
     - NIL, :STANDARD, and :COMMON-LISP designate the /standard readtable/.
 
-    - :MODERM designates a _case-preserving_ /standard-readtable/.
+    - :MODERN designates a _case-preserving_ /standard-readtable/.
 
     - :CURRENT designates the /current readtable/.
 
@@ -178,6 +179,8 @@
     > ...
     >
     > (in-readtable scheme:syntax)
+    >
+    > ...
 
 * Acknowledgements
 

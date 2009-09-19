@@ -20,17 +20,9 @@
 
 ;;; TODO:
 ;;;
-;;;    * Remove redefinition style-warning in DEFREADTABLE
-;;;
-;;;    * Add style-warning if redefined readtable contains entries
-;;;      not specified in the DEFREADTABLE form (cf. SBCL's DEFPACKAGE)
-;;;
-;;;    * Add style-warning if :MERGE overwrites entries
-;;;
 ;;;    * Add :FUZE that's like :MERGE without the style-warnings
 ;;;
 ;;;    * Think about MAKE-DISPATCHING-MACRO-CHARACTER in DEFREADTABLE
-
 
 ;;;;;; DEFREADTABLE &c.
 
@@ -43,12 +35,13 @@ The readtable can be populated using the following `options':
 
   (:MERGE `readtable-designators'+)
 
-      Merge the readtables designated into the new readtable, using
-      MERGE-READTABLES-INTO.
- 
-      Note that the process of merging readtables is _not_ commutative, so
-      that reader macros in earlier entries will be overwritten by later
-      ones.
+      Merge the readtables designated into the new readtable being defined
+      as per MERGE-READTABLES-INTO.
+
+      Error conditions of type READER-MACRO-CONFLICT that are signaled
+      during the merge operation are continued and warnings are signaled
+      instead. It follows that reader macros in earlier entries will be
+      _overwritten_ by later ones.
 
       If no :MERGE clause is given, an empty readtable is used. See
       MAKE-READTABLE.
@@ -88,6 +81,9 @@ Notes:
   its definition -- you have to wrap the DEFREADTABLE form in an explicit
   EVAL-WHEN.
 
+  On redefinition, the target readtable is made empty first before it's
+  refilled according to the clauses.
+
   NIL, :STANDARD, :COMMON-LISP, :MODERN, and :CURRENT are
   preregistered readtable names.
 "
@@ -98,14 +94,12 @@ Notes:
   (flet ((process-option (option var)
            (destructure-case option
              ((:merge &rest readtable-designators)
-	      `(merge-readtables-into ,var ,@readtable-designators))
+	      `(merge-readtables-into ,var
+                 ,@(mapcar #'(lambda (x) `',x) readtable-designators))) ; quotify
              ((:dispatch-macro-char disp-char sub-char function)
               `(set-dispatch-macro-character ,disp-char ,sub-char ,function ,var))
              ((:macro-char char function &optional non-terminating-p)
 	      (if (eq function :dispatch)
-		  ;; FIXME: This is not perfect as SBCL signals an
-		  ;; error on already existing dispatch macros. I sent
-		  ;; an appropriate patch upstream.
 		  `(make-dispatch-macro-character ,char ,non-terminating-p ,var)
 		  `(set-macro-character ,char ,function ,non-terminating-p ,var)))
 	     ((:syntax-from from-rt-designator from-char to-char)
@@ -130,17 +124,25 @@ Notes:
 	 (error "Bogus DEFREADTABLE clauses: ~/PPRINT-LINEAR/" other-clauses))
 	(t
 	 `(eval-when (:load-toplevel :execute)
-	    (handler-bind ((readtable-does-already-exist
-			    #'(lambda (c)
-				(simple-style-warn 
-				 "Overwriting previously existing readtable ~S."
-				 (existing-readtable-name c))
-				(continue c))))
+	    (handler-bind ((reader-macro-conflict
+                            #'(lambda (c)
+                                (warn "~@<Overwriting ~C~@[~C~] in ~A ~
+                                          with entry from ~A.~@:>"
+                                      (conflicting-macro-char c)
+                                      (conflicting-dispatch-sub-char c)
+                                      (to-readtable c)
+                                      (from-readtable c))
+                                (continue c))))
 	      ;; The (FIND-READTABLE ...) is important for proper
 	      ;; redefinition semantics, as redefining has to modify the
 	      ;; already existing readtable object.
-	      (let ((readtable (or (find-readtable ',name)
-                                   (make-readtable ',name))))
+	      (let ((readtable (find-readtable ',name)))
+                (cond ((not readtable)
+                       (setq readtable (make-readtable ',name)))
+                      (t
+                       (setq readtable (%clear-readtable readtable))
+                       (simple-style-warn "Overwriting already existing readtable ~S."
+                                          readtable)))
 		,@(loop for option in merge-clauses
 			collect (process-option option 'readtable))
 		,@(loop for option in case-clauses
@@ -162,7 +164,8 @@ Notes:
        (%frob-swank-readtable-alist *package* *readtable*))
      ))
 
-;;; KLUDGE:
+;;; KLUDGE: [interim solution]
+;;;
 ;;;   We need support for this in Slime itself, because we want IN-READTABLE
 ;;;   to work on a per-file basis, and not on a per-package basis.
 ;;; 
@@ -177,7 +180,6 @@ Notes:
 			   (destructuring-bind (pkg-name2 . rt2) entry2
 			     (and (string= pkg-name1 pkg-name2)
 				  (eq rt1 rt2)))))))))
-
 
 
 (declaim (special *standard-readtable* *empty-readtable*))
@@ -199,8 +201,12 @@ standard macro character has been made a constituent."
 	   (error "~A is the designator for a predefined readtable. ~
                    Not acceptable as a user-specified readtable name." name))
 	  ((let ((rt (find-readtable name)))
-	     (and rt (cerror "Overwrite existing readtable." 
-			     'readtable-does-already-exist :readtable-name name))))
+	     (and rt (prog1 nil
+                       (cerror "Overwrite existing readtable." 
+                               'readtable-does-already-exist :readtable-name name)
+                       ;; Explicitly unregister to make sure that we do not hold on
+                       ;; of any reference to RT.
+                       (unregister-readtable rt)))))
 	  (t (let ((result (apply #'merge-readtables-into
 				  ;; The first readtable specified in the :merge list is
 				  ;; taken as the basis for all subsequent (destructive!)
@@ -209,6 +215,7 @@ standard macro character has been made a constituent."
                                                       (ensure-readtable (first merge-list))
                                                       *empty-readtable*))
 				  (rest merge-list))))
+               
 	       (register-readtable name result))))))
 
 (defun rename-readtable (named-readtable-designator new-name)
@@ -233,37 +240,32 @@ is signaled."
 
 (defun merge-readtables-into (result-table &rest named-readtable-designators)
   "Copy the contents of each readtable in `named-readtable-designators'
-into `result-table'. Because the readtables are merged in turn, macro
-definitions in readtables appearing later in the list will overwrite
-reader-macros appearing earlier."
-  (flet ((merge-into (rt1 rt2)
-           ;;; FIXME: document why STANDARD-FOO-CHAR-P
-	   (do-readtable ((char reader-fn disp? table) rt2)
-             (unless (standard-macro-char-p char rt2)
-               (let ((non-terminating-p (nth-value 1 (get-macro-character char rt2))))
-                 (set-macro-character char reader-fn non-terminating-p rt1)))
-             (when disp?
-               (loop for (subchar . subfn) in table do
-                     (unless (standard-dispatch-macro-char-p char subchar rt2)
-                       (set-dispatch-macro-character char subchar subfn rt1)))))
-	   rt1))
+into `result-table'.
+
+If a macro character appears in more than one of the readtables, i.e. if a
+conflict is discovered during the merge, an error of type
+READER-MACRO-CONFLICT is signaled."
+  (flet ((merge-into (to from)
+	   (do-readtable ((char reader-fn disp? table) from)
+             (let ((non-terminating-p (nth-value 1 (get-macro-character char from))))
+               (check-reader-macro-conflict from to char)
+               (cond ((not disp?)
+                      (set-macro-character char reader-fn non-terminating-p to))
+                     (t
+                      (ensure-dispatch-macro-character char non-terminating-p to)
+                      (loop for (subchar . subfn) in table do
+                        (check-reader-macro-conflict from to char subchar)
+                        (set-dispatch-macro-character char subchar subfn to))))))
+	   to))
     (setf result-table (ensure-readtable result-table))
     (dolist (table (mapcar #'ensure-readtable named-readtable-designators))
       (merge-into result-table table))
     result-table))
 
-(defun standard-macro-char-p (char rt)
-  (multiple-value-bind (rt-fn rt-flag) (get-macro-character char rt)
-    (multiple-value-bind (std-fn std-flag) (get-macro-character char *standard-readtable*)
-      (and (eq rt-fn std-fn)
-	   (eq rt-flag std-flag)))))
-
-(defun standard-dispatch-macro-char-p (disp-char sub-char rt)
-  (flet ((non-terminating-p (ch rt) (nth-value 1 (get-macro-character ch rt))))
-    (and (eq (non-terminating-p disp-char rt)
-	     (non-terminating-p disp-char *standard-readtable*))
-	 (eq (get-dispatch-macro-character disp-char sub-char rt)
-	     (get-dispatch-macro-character disp-char sub-char *standard-readtable*)))))
+(defun ensure-dispatch-macro-character (char &optional non-terminating-p
+                                                       (readtable *readtable*))
+  (unless (dispatch-macro-char-p char readtable)
+    (make-dispatch-macro-character char non-terminating-p readtable)))
 
 (defun list-all-named-readtables ()
   "Returns a list of all registered readtables. The returned list is
@@ -285,7 +287,7 @@ guaranteed to be fresh, but may contain duplicates."
   ((readtable-name :initarg :readtable-name 
 	           :initform (required-argument)
 	           :accessor missing-readtable-name
-                   :type named-readtable-designatord))
+                   :type named-readtable-designator))
   (:report (lambda (condition stream)
              (format stream "A readtable named ~S does not exist."
                      (missing-readtable-name condition)))))
@@ -294,11 +296,68 @@ guaranteed to be fresh, but may contain duplicates."
   ((readtable-name :initarg :readtable-name
                    :initform (required-argument)
                    :accessor existing-readtable-name
-                   :type named-readtable-designatord))
+                   :type named-readtable-designator))
   (:report (lambda (condition stream)
              (format stream "A readtable named ~S already exists."
                      (existing-readtable-name condition))))
   (:documentation "Continuable."))
+
+(define-condition reader-macro-conflict (readtable-error)
+  ((macro-char
+    :initarg :macro-char
+    :initform (required-argument)
+    :accessor conflicting-macro-char
+    :type character)
+   (sub-char
+    :initarg :sub-char
+    :initform nil
+    :accessor conflicting-dispatch-sub-char
+    :type (or null character))
+   (from-readtable
+    :initarg :from-readtable
+    :initform (required-argument)
+    :accessor from-readtable
+    :type readtable)
+   (to-readtable
+    :initarg :to-readtable
+    :initform (required-argument)
+    :accessor to-readtable
+    :type readtable))
+  (:report
+   (lambda (condition stream)
+     (format stream "~@<Reader macro conflict while trying to merge the ~
+                        ~:[macro character~;dispatch macro characters~] ~
+                        ~@C~@[ ~@C~] from ~A into ~A.~@:>"
+             (conflicting-dispatch-sub-char condition)
+             (conflicting-macro-char condition)
+             (conflicting-dispatch-sub-char condition)
+             (from-readtable condition)
+             (to-readtable condition))))
+  (:documentation "Continuable.
+
+This condition is signaled during the merge process if a) a reader macro
+\(be it a macro character or the sub character of a dispatch macro
+character\) is both present in the source as well as the target readtable,
+and b) if and only if the two respective reader macro functions differ (as
+per EQ.)"))
+
+(defun check-reader-macro-conflict (from to char &optional subchar)
+  (flet ((conflictp (from-fn to-fn)
+           (and to-fn
+                (not (eq to-fn from-fn)))))
+    (when (if subchar
+              (conflictp (get-dispatch-macro-character char subchar from)
+                         (get-dispatch-macro-character char subchar to))
+              (conflictp (get-macro-character char from)
+                         (get-macro-character char to)))
+      (break "from = ~S, to = ~S, char = ~S, subchar = ~S"
+             from to char subchar)
+      (cerror (format nil "Overwrite ~@C in ~A." char to)
+              'reader-macro-conflict
+              :from-readtable from
+              :to-readtable to
+              :macro-char char
+              :sub-char subchar))))
 
 
 ;;; Although there is no way to get at the standard readtable in
@@ -320,16 +379,11 @@ guaranteed to be fresh, but may contain duplicates."
 ;;; is out of scope of this library, though. So we just threaten
 ;;; with nasal demons.
 ;;;
-(defvar *standard-readtable* (%standard-readtable))
+(defvar *standard-readtable*
+  (%standard-readtable))
 
 (defvar *empty-readtable*
-  (let ((readtable (copy-readtable nil)))
-    (do-readtable (char readtable)
-      (set-syntax-from-char char #\A readtable *standard-readtable*))
-    ;; FIXME: Alas, on SBCL, SET-SYNTAX-FROM-CHAR does not get rid of a
-    ;; readtable's dispatch table properly.
-    #+sbcl (setf (sb-impl::dispatch-tables readtable) nil)
-    readtable))
+  (%clear-readtable (copy-readtable nil)))
 
 (defvar *case-preserving-standard-readtable*
   (let ((readtable (copy-readtable nil)))

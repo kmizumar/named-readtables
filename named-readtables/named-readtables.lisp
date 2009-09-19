@@ -325,7 +325,7 @@ guaranteed to be fresh, but may contain duplicates."
 (defvar *empty-readtable*
   (let ((readtable (copy-readtable nil)))
     (do-readtable (char readtable)
-      (set-syntax-from-char char #\A readtable (%standard-readtable)))
+      (set-syntax-from-char char #\A readtable *standard-readtable*))
     ;; FIXME: Alas, on SBCL, SET-SYNTAX-FROM-CHAR does not get rid of a
     ;; readtable's dispatch table properly.
     #+sbcl (setf (sb-impl::dispatch-tables readtable) nil)

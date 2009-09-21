@@ -54,7 +54,6 @@
 
      * it makes it possible to use multiple inheritance between readtables.
 
-
 * Notes on the API
 
   The API heavily imitates the API of packages. This has the nice
@@ -79,7 +78,6 @@
 
       LIST-ALL-NAMED-READTABLES -   LIST-ALL-PACKAGES
 
-
 * Important API idiosyncrasies
 
   There are three major differences between the API of Named-Readtables,
@@ -97,7 +95,7 @@
         happily coexist next to each other. Or, taken to an extreme,
         SCHEME:SYNTAX and ELISP:SYNTAX.
 
-        If, for example to duely signify the importance of your cool
+        If, for example to duly signify the importance of your cool
         readtable hack, you really think it deserves a global name,
         you can always resort to keywords.
 

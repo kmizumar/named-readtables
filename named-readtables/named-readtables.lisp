@@ -202,7 +202,7 @@ standard macro character has been made a constituent."
                    Not acceptable as a user-specified readtable name." name))
 	  ((let ((rt (find-readtable name)))
 	     (and rt (prog1 nil
-                       (cerror "Overwrite existing readtable." 
+                       (cerror "Overwrite existing entry." 
                                'readtable-does-already-exist :readtable-name name)
                        ;; Explicitly unregister to make sure that we do not hold on
                        ;; of any reference to RT.
@@ -226,17 +226,17 @@ is signaled."
   (check-type named-readtable-designator named-readtable-designator)
   (check-type new-name symbol)
   (when (find-readtable new-name)
-    (cerror "Overwrite existing readtable." 
+    (cerror "Overwrite existing entry." 
             'readtable-does-already-exist :readtable-name new-name))
-  (let* ((read-table (ensure-readtable named-readtable-designator))
-	 (read-table-name (readtable-name read-table)))
+  (let* ((readtable (ensure-readtable named-readtable-designator))
+	 (readtable-name (readtable-name readtable)))
     ;; We use the internal functions directly to omit repeated
     ;; type-checking.
-    (%unassociate-name-from-readtable read-table-name read-table)
-    (%unassociate-readtable-from-name read-table-name read-table)
-    (%associate-name-with-readtable new-name read-table)
-    (%associate-readtable-with-name new-name read-table)
-    read-table))
+    (%unassociate-name-from-readtable readtable-name readtable)
+    (%unassociate-readtable-from-name readtable-name readtable)
+    (%associate-name-with-readtable new-name readtable)
+    (%associate-readtable-with-name new-name readtable)
+    readtable))
 
 (defun merge-readtables-into (result-table &rest named-readtable-designators)
   "Copy the contents of each readtable in `named-readtable-designators'
@@ -246,16 +246,15 @@ If a macro character appears in more than one of the readtables, i.e. if a
 conflict is discovered during the merge, an error of type
 READER-MACRO-CONFLICT is signaled."
   (flet ((merge-into (to from)
-	   (do-readtable ((char reader-fn disp? table) from)
-             (let ((non-terminating-p (nth-value 1 (get-macro-character char from))))
-               (check-reader-macro-conflict from to char)
-               (cond ((not disp?)
-                      (set-macro-character char reader-fn non-terminating-p to))
-                     (t
-                      (ensure-dispatch-macro-character char non-terminating-p to)
-                      (loop for (subchar . subfn) in table do
-                        (check-reader-macro-conflict from to char subchar)
-                        (set-dispatch-macro-character char subchar subfn to))))))
+	   (do-readtable ((char reader-fn non-terminating-p disp? table) from)
+             (check-reader-macro-conflict from to char)
+             (cond ((not disp?)
+                    (set-macro-character char reader-fn non-terminating-p to))
+                   (t
+                    (ensure-dispatch-macro-character char non-terminating-p to)
+                    (loop for (subchar . subfn) in table do
+                      (check-reader-macro-conflict from to char subchar)
+                      (set-dispatch-macro-character char subchar subfn to)))))
 	   to))
     (setf result-table (ensure-readtable result-table))
     (dolist (table (mapcar #'ensure-readtable named-readtable-designators))
@@ -266,6 +265,10 @@ READER-MACRO-CONFLICT is signaled."
                                                        (readtable *readtable*))
   (unless (dispatch-macro-char-p char readtable)
     (make-dispatch-macro-character char non-terminating-p readtable)))
+
+(defun copy-named-readtable (named-readtable-designator)
+  "Like COPY-READTABLE but takes a NAMED-READTABLE-DESIGNATOR as argument."
+  (copy-readtable (ensure-readtable named-readtable-designator)))
 
 (defun list-all-named-readtables ()
   "Returns a list of all registered readtables. The returned list is
@@ -341,23 +344,28 @@ character\) is both present in the source as well as the target readtable,
 and b) if and only if the two respective reader macro functions differ (as
 per EQ.)"))
 
+
 (defun check-reader-macro-conflict (from to char &optional subchar)
   (flet ((conflictp (from-fn to-fn)
-           (and to-fn
-                (not (eq to-fn from-fn)))))
+           (and to-fn (not (function= to-fn from-fn)))))
     (when (if subchar
-              (conflictp (get-dispatch-macro-character char subchar from)
-                         (get-dispatch-macro-character char subchar to))
+              (conflictp (safe-get-dispatch-macro-character char subchar from)
+                         (safe-get-dispatch-macro-character char subchar to))
               (conflictp (get-macro-character char from)
                          (get-macro-character char to)))
-      (break "from = ~S, to = ~S, char = ~S, subchar = ~S"
-             from to char subchar)
       (cerror (format nil "Overwrite ~@C in ~A." char to)
               'reader-macro-conflict
               :from-readtable from
               :to-readtable to
               :macro-char char
               :sub-char subchar))))
+
+;;; See Ticket 601. This is supposed to be removed at some point in
+;;; the future.
+(defun safe-get-dispatch-macro-character (char subchar rt)
+  #+ccl (ignore-errors
+         (get-dispatch-macro-character char subchar rt))
+  #-ccl (get-dispatch-macro-character char subchar rt))
 
 
 ;;; Although there is no way to get at the standard readtable in
@@ -436,42 +444,42 @@ signals an error of type READTABLE-DOES-NOT-EXIST instead."
 	  (t (setf (find-readtable designator) (ensure-readtable default))))))
 
 
-(defun register-readtable (name read-table)
-  "Associate `read-table' with `name'."
+(defun register-readtable (name readtable)
+  "Associate `readtable' with `name'. Returns the readtable."
   (check-type name symbol)
-  (check-type read-table readtable)
+  (check-type readtable readtable)
   (check-type name (not (satisfies reserved-readtable-name-p)))
-  (%associate-readtable-with-name name read-table)
-  (%associate-name-with-readtable name read-table)
-  read-table)
+  (%associate-readtable-with-name name readtable)
+  (%associate-name-with-readtable name readtable)
+  readtable)
 
 (defun unregister-readtable (named-readtable-designator)
   "Remove the association of `named-readtable-designator'. Returns T if
 successfull, NIL otherwise."
-  (let* ((read-table (ensure-readtable named-readtable-designator))
-	 (read-table-name (readtable-name read-table)))
-    (if (not read-table-name)
+  (let* ((readtable (find-readtable named-readtable-designator))
+	 (readtable-name (and readtable (readtable-name readtable))))
+    (if (not readtable-name)
 	nil
 	(prog1 t
-	  (check-type read-table-name (not (satisfies reserved-readtable-name-p)))
-            (%unassociate-readtable-from-name read-table-name read-table)
-            (%unassociate-name-from-readtable read-table-name read-table)))))
+	  (check-type readtable-name (not (satisfies reserved-readtable-name-p)))
+            (%unassociate-readtable-from-name readtable-name readtable)
+            (%unassociate-name-from-readtable readtable-name readtable)))))
 
 (defun readtable-name (named-readtable-designator)
   "Returns the name of the readtable designated by
 `named-readtable-designator', or NIL."
   (check-type named-readtable-designator named-readtable-designator)
-  (let ((read-table (ensure-readtable named-readtable-designator)))
-    (cond ((%readtable-name read-table))
-          ((eq read-table *readtable*) :current)
-	  ((eq read-table *standard-readtable*) :common-lisp)
-          ((eq read-table *case-preserving-standard-readtable*) :modern)
+  (let ((readtable (ensure-readtable named-readtable-designator)))
+    (cond ((%readtable-name readtable))
+          ((eq readtable *readtable*) :current)
+	  ((eq readtable *standard-readtable*) :common-lisp)
+          ((eq readtable *case-preserving-standard-readtable*) :modern)
 	  (t nil))))
 
 
 ;;;;; Compiler macros
 
-;;; Since the :STANDARD read-table is interned, and we can't enforce
+;;; Since the :STANDARD readtable is interned, and we can't enforce
 ;;; its immutability, we signal a style-warning for suspicious uses
 ;;; that may result in strange behaviour:
 
@@ -490,14 +498,14 @@ successfull, NIL otherwise."
 				 (ensure-readtable :standard))))
 	(t nil)))
 
-(defun signal-suspicious-registration-warning (name-expr read-table-expr)
+(defun signal-suspicious-registration-warning (name-expr readtable-expr)
   (simple-style-warn
    "Caution: ~<You're trying to register the :STANDARD readtable ~
     under a new name ~S. As modification of the :STANDARD readtable ~
     is not permitted, subsequent modification of ~S won't be ~
     permitted either. You probably want to wrap COPY-READTABLE ~
     around~@:>~%             ~S"
-   (list name-expr name-expr) read-table-expr))
+   (list name-expr name-expr) readtable-expr))
 
 (let ()
   ;; Defer to runtime because compiler-macros are made available already
@@ -507,9 +515,9 @@ successfull, NIL otherwise."
   ;; (This does not use EVAL-WHEN because of Fig 3.7, CLHS 3.2.3.1;
   ;; cf. last example in CLHS "EVAL-WHEN" entry.)
   
-  (define-compiler-macro register-readtable (&whole form name read-table)
-    (when (constant-standard-readtable-expression-p read-table)
-      (signal-suspicious-registration-warning name read-table))
+  (define-compiler-macro register-readtable (&whole form name readtable)
+    (when (constant-standard-readtable-expression-p readtable)
+      (signal-suspicious-registration-warning name readtable))
     form)
 
   (define-compiler-macro ensure-readtable (&whole form name &optional (default nil default-p))

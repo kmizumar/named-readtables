@@ -16,13 +16,23 @@
 	 :format-control format-control
 	 :format-arguments format-args))
 
-
 (defmacro without-package-lock ((&rest package-names) &body body)
   (declare (ignorable package-names))
-  #+clisp (return-from without-package-lock
-            `(ext:without-package-lock (,@package-names) ,@body))
+  #+clisp
+  (return-from without-package-lock
+    `(ext:without-package-lock (,@package-names) ,@body))
+  #+lispworks
+  (return-from without-package-lock
+    `(let ((hcl:*packages-for-warn-on-redefinition*
+            (set-difference hcl:*packages-for-warn-on-redefinition*
+                            '(,@package-names)
+                            :key (lambda (package-designator)
+                                   (if (packagep package-designator)
+                                       (package-name package-designator)
+                                       package-designator))
+                            :test #'string=)))
+       ,@body))
   `(progn ,@body))
-
 
 ;;; Taken from SWANK (which is Public Domain.)
 
@@ -58,3 +68,14 @@ corresponding values in the CDR of VALUE."
 use as an initialization form for structure and class-slots, and
 a default value for required keyword arguments."
   (error "Required argument ~@[~S ~]missing." name))
+
+(declaim (inline ensure-function))	; to propagate return type.
+(declaim (ftype (function (t) (values function &optional))
+                ensure-function))
+(defun ensure-function (function-designator)
+  "Returns the function designated by FUNCTION-DESIGNATOR:
+if FUNCTION-DESIGNATOR is a function, it is returned, otherwise
+it must be a function name and its FDEFINITION is returned."
+  (if (functionp function-designator)
+      function-designator
+      (fdefinition function-designator)))

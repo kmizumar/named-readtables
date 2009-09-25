@@ -15,6 +15,7 @@
    #:readtable-name
    #:register-readtable
    #:unregister-readtable
+   #:copy-named-readtable
    #:list-all-named-readtables
    ;; Types
    #:named-readtable-designator

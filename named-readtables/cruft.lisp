@@ -23,17 +23,6 @@
 
 ;;;;; Implementation-dependent cruft
 
-
-;;; This should return an implementation's actual standard readtable
-;;; object only if the implementation makes the effort to guard against
-;;; modification of that object. Otherwise it should better return a
-;;; copy.
-(define-cruft %standard-readtable ()
-  "Return the standard readtable."
-  #+ :sbcl+safe-standard-readtable sb-impl::*standard-readtable*
-  #+ :common-lisp                  (copy-readtable nil))
-
-
 ;;;; Mapping between a readtable object and its readtable-name.
 
 (defvar *readtable-names* (make-hash-table :test 'eq))
@@ -98,20 +87,39 @@
   "Return the readtable named NAME."
   #+ :allegro     (excl:named-readtable (readtable-name-for-allegro name))
   #+ :common-lisp (values (gethash name *named-readtables* nil)))
+
 
 ;;;; Reader-macro related predicates
 
+;;; CLISP creates new function objects for standard reader macros on
+;;; each readtable copy.
+(define-cruft function= (fn1 fn2)
+  "Are reader-macro function-designators FN1 and FN2 the same?"
+  #+ :clisp
+  (let* ((fn1 (ensure-function fn1))
+         (fn2 (ensure-function fn2))
+         (n1 (system::function-name fn1))
+         (n2 (system::function-name fn2)))
+    (if (and (eq n1 :lambda) (eq n2 :lambda))
+        (eq fn1 fn2)
+        (equal n1 n2)))
+  #+ :common-lisp
+  (eq (ensure-function fn1) (ensure-function fn2)))
+
+;;; CCL has a bug that prevents the portable form below from working
+;;; (Ticket 601). CLISP will incorrectly fold the call to G-D-M-C away
+;;; if not declared inline..
 (define-cruft dispatch-macro-char-p (char rt)
   "Is CHAR a dispatch macro character in RT?"
-  ;; CCL has a bug that prevents the portable form below from
-  ;; working. Patch has been sent upstream. (2009-09-19.)
   #+ :ccl
   (let ((def (cdr (nth-value 1 (ccl::%get-readtable-char char rt)))))
     (or (consp (cdr def))
         (eq (car def) #'ccl::read-dispatch)))
   #+ :common-lisp
-  (handler-case (prog1 t
-                  (get-dispatch-macro-character char #\x rt))
+  (handler-case (locally
+                    #+clisp (declare (notinline get-dispatch-macro-character))
+                  (get-dispatch-macro-character char #\x rt)
+                  t)
     (error () nil)))
 
 ;; (defun macro-char-p (char rt)
@@ -233,11 +241,11 @@
 (eval-when (:compile-toplevel)
   (let ((*print-pretty* t))
     (simple-style-warn
-     "~@<~A hasn't been ported to ~A. ~
+     "~&~@<  ~@;~A has not been ported to ~A. ~
        We fall back to a portable implementation of readtable iterators. ~
        This implementation has to grovel through all available characters. ~
-       On Unicode-aware implementations this comes with some costs.~@:>" 
-     (package-name *package*) (lisp-implementation-type))))
+       On Unicode-aware implementations this may come with some costs.~@:>" 
+     (package-name '#.*package*) (lisp-implementation-type))))
 
 #-(or sbcl clozure allegro)
 (defun %make-readtable-iterator (readtable)
@@ -253,11 +261,18 @@
                (when (not fn) (go :GROVEL))
                (multiple-value-bind (disp? alist)
                    (handler-case ; grovel dispatch macro characters.
-                       (values t (loop for code from 0 below char-code-limit
-                                       for subchar = (code-char code)
-                                       for disp-fn = (get-dispatch-macro-character
-                                                      char subchar readtable)
-                                       when disp-fn
+                       (values t
+                               ;; Only grovel upper case characters to
+                               ;; avoid duplicates.
+                               (loop for code from 0 below char-code-limit
+                                     for subchar = (let ((ch (code-char code)))
+                                                     (when (or (not (alpha-char-p ch))
+                                                               (upper-case-p ch))
+                                                       ch))
+                                     for disp-fn = (and subchar
+                                                        (get-dispatch-macro-character
+                                                            char subchar readtable))
+                                     when disp-fn
                                        collect (cons subchar disp-fn)))
                      (error () nil))
                  (return (values t char fn disp? alist)))))))))
@@ -265,35 +280,53 @@
 (defmacro do-readtable ((entry-designator readtable &optional result)
                         &body body)
   "Iterate through a readtable's macro characters, and dispatch macro characters."
-  (destructuring-bind (char &optional reader-fn disp? table)
+  (destructuring-bind (char &optional reader-fn non-terminating-p disp? table)
       (if (symbolp entry-designator)
           (list entry-designator)
           entry-designator)
     (let ((iter (gensym "ITER+"))
-          (more? (gensym "MORE?+")))
-      `(with-readtable-iterator (,iter ,readtable)
-         (loop
-          (multiple-value-bind (,more?
-                                ,char
-                                ,@(when reader-fn (list reader-fn))
-                                ,@(when disp? (list disp?))
-                                ,@(when table (list table)))
-              (,iter)
-            (unless ,more? (return ,result))
-            ,@body))))))
+          (more? (gensym "MORE?+"))
+          (rt (gensym "READTABLE+")))
+      
+      `(let ((,rt ,readtable))
+         (with-readtable-iterator (,iter ,rt)
+           (loop
+             (multiple-value-bind (,more?
+                                   ,char
+                                   ,@(when reader-fn (list reader-fn))
+                                   ,@(when disp? (list disp?))
+                                   ,@(when table (list table)))
+                 (,iter)
+               (unless ,more? (return ,result))
+               (let ,(when non-terminating-p
+                       ;; FIXME: N-T-P should be incorporated in iterators.
+                       `((,non-terminating-p
+                          (nth-value 1 (get-macro-character ,char ,rt)))))
+                 ,@body))))))))
 
 ;;;; Misc
 
 (declaim (special *standard-readtable*))
 
-(defun %clear-readtable (readtable)
+;;; This should return an implementation's actual standard readtable
+;;; object only if the implementation makes the effort to guard against
+;;; modification of that object. Otherwise it should better return a
+;;; copy.
+(define-cruft %standard-readtable ()
+  "Return the standard readtable."
+  #+ :sbcl+safe-standard-readtable sb-impl::*standard-readtable*
+  #+ :common-lisp                  (copy-readtable nil))
+
+;;; FIXME: Alas, on SBCL, SET-SYNTAX-FROM-CHAR does not get rid of a
+;;; readtable's dispatch table properly.
+(define-cruft %clear-readtable (readtable)
   "Make all macro characters in READTABLE be consituents."
-  (do-readtable (char readtable)
-    (set-syntax-from-char char #\A readtable *standard-readtable*))
-  ;; FIXME: Alas, on SBCL, SET-SYNTAX-FROM-CHAR does not get rid of a
-  ;; readtable's dispatch table properly.
-  #+sbcl (setf (sb-impl::dispatch-tables readtable) nil)
-  readtable)
+  #+ :common-lisp
+  (progn
+    (do-readtable (char readtable)
+      (set-syntax-from-char char #\A readtable *standard-readtable*))
+    #+sbcl (setf (sb-impl::dispatch-tables readtable) nil)
+    readtable))
 
 
 ;;;; Specialized PRINT-OBJECT for named readtables.

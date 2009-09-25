@@ -1,18 +1,15 @@
+;;; -*- Mode:Lisp -*-
 
-(defpackage :named-readtables-system
-  (:use :cl :asdf))
+(in-package :cl-user)
 
-(in-package :named-readtables-system)
+(defclass asdf::named-readtables-source-file (asdf:cl-source-file) ())
 
-(defclass named-readtables-source-file (cl-source-file) ())
-
-(defsystem :named-readtables
+(asdf:defsystem :named-readtables
   :description "Library that creates a namespace for named readtable akin to the namespace of packages."
   :author "Tobias C. Rittweiler <trittweiler@common-lisp.net>"
   :version "1.0 (unpublished so far)"
   :licence "BSD"
-  :serial t
-  :default-component-class named-readtables-source-file
+  :default-component-class asdf::named-readtables-source-file
   :components
   ((:file "package")
    (:file "utils"                 :depends-on ("package"))
@@ -21,7 +18,7 @@
 
 
 #+sbcl
-(defmethod perform :around ((operation compile-op)
-                            (c named-readtables-source-file))
+(defmethod asdf:perform :around
+    ((operation asdf:compile-op) (component asdf::named-readtables-source-file))
   (let ((sb-ext:*derive-function-types* t))
     (call-next-method)))

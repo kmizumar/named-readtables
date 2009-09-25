@@ -20,8 +20,9 @@
   :components
   ((:file "package")
    (:file "utils"                 :depends-on ("package"))
+   (:file "define-api"            :depends-on ("package" "utils"))
    (:file "cruft"                 :depends-on ("package" "utils"))
-   (:file "named-readtables"      :depends-on ("package" "utils" "cruft"))))
+   (:file "named-readtables"      :depends-on ("package" "utils" "cruft" "define-api"))))
 
 (defmethod asdf:perform ((o asdf:test-op)
                          (c (eql (asdf:find-system :named-readtables))))

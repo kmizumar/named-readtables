@@ -287,7 +287,6 @@
     (let ((iter (gensym "ITER+"))
           (more? (gensym "MORE?+"))
           (rt (gensym "READTABLE+")))
-      
       `(let ((,rt ,readtable))
          (with-readtable-iterator (,iter ,rt)
            (loop

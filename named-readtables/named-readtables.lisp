@@ -180,11 +180,20 @@ Notes:
 			   (destructuring-bind (pkg-name2 . rt2) entry2
 			     (and (string= pkg-name1 pkg-name2)
 				  (eq rt1 rt2)))))))))
+
+(deftype readtable-designator ()
+  `(or null readtable))
+
+(deftype named-readtable-designator ()
+  "Either a symbol or a readtable itself."
+  `(or readtable-designator symbol))
 
 
 (declaim (special *standard-readtable* *empty-readtable*))
 
-(defun make-readtable (name &key merge)
+(define-api make-readtable
+    (name &key merge)
+    (named-readtable-designator &key (:merge list) => readtable)
   "Creates and returns a new readtable under the specified `name'.
 
 `merge' takes a list of NAMED-READTABLE-DESIGNATORS and specifies the
@@ -195,36 +204,34 @@ used instead.
 An empty readtable is a readtable where the character syntax of each
 character is like in the /standard readtable/ except that each
 standard macro character has been made a constituent."
-  (let ((merge-list merge))
-    (check-type merge-list list)
-    (cond ((reserved-readtable-name-p name)
-	   (error "~A is the designator for a predefined readtable. ~
+  (cond ((reserved-readtable-name-p name)
+         (error "~A is the designator for a predefined readtable. ~
                    Not acceptable as a user-specified readtable name." name))
-	  ((let ((rt (find-readtable name)))
-	     (and rt (prog1 nil
-                       (cerror "Overwrite existing entry." 
-                               'readtable-does-already-exist :readtable-name name)
-                       ;; Explicitly unregister to make sure that we do not hold on
-                       ;; of any reference to RT.
-                       (unregister-readtable rt)))))
-	  (t (let ((result (apply #'merge-readtables-into
-				  ;; The first readtable specified in the :merge list is
-				  ;; taken as the basis for all subsequent (destructive!)
-				  ;; modifications (and hence it's copied.)
-				  (copy-readtable (if merge
-                                                      (ensure-readtable (first merge-list))
-                                                      *empty-readtable*))
-				  (rest merge-list))))
+        ((let ((rt (find-readtable name)))
+           (and rt (prog1 nil
+                     (cerror "Overwrite existing entry." 
+                             'readtable-does-already-exist :readtable-name name)
+                     ;; Explicitly unregister to make sure that we do not hold on
+                     ;; of any reference to RT.
+                     (unregister-readtable rt)))))
+        (t (let ((result (apply #'merge-readtables-into
+                                ;; The first readtable specified in the :merge list is
+                                ;; taken as the basis for all subsequent (destructive!)
+                                ;; modifications (and hence it's copied.)
+                                (copy-readtable (if merge
+                                                    (ensure-readtable (first merge))
+                                                    *empty-readtable*))
+                                (rest merge))))
                
-	       (register-readtable name result))))))
+             (register-readtable name result)))))
 
-(defun rename-readtable (named-readtable-designator new-name)
+(define-api rename-readtable
+    (named-readtable-designator new-name)
+    (named-readtable-designator symbol => readtable)
   "Replaces the associated name of the readtable designated by
 `named-readtable-designator' with `new-name'. If a readtable is already
 registered under `new-name', an error of type READTABLE-DOES-ALREADY-EXIST
 is signaled."
-  (check-type named-readtable-designator named-readtable-designator)
-  (check-type new-name symbol)
   (when (find-readtable new-name)
     (cerror "Overwrite existing entry." 
             'readtable-does-already-exist :readtable-name new-name))
@@ -238,7 +245,9 @@ is signaled."
     (%associate-readtable-with-name new-name readtable)
     readtable))
 
-(defun merge-readtables-into (result-table &rest named-readtable-designators)
+(define-api merge-readtables-into
+    (result-readtable &rest named-readtable-designators)
+    (named-readtable-designator &rest named-readtable-designator => readtable)
   "Copy the contents of each readtable in `named-readtable-designators'
 into `result-table'.
 
@@ -256,34 +265,28 @@ READER-MACRO-CONFLICT is signaled."
                       (check-reader-macro-conflict from to char subchar)
                       (set-dispatch-macro-character char subchar subfn to)))))
 	   to))
-    (setf result-table (ensure-readtable result-table))
-    (dolist (table (mapcar #'ensure-readtable named-readtable-designators))
-      (merge-into result-table table))
-    result-table))
+    (let ((result-table (ensure-readtable result-readtable)))
+      (dolist (table (mapcar #'ensure-readtable named-readtable-designators))
+        (merge-into result-table table))
+      result-table)))
 
 (defun ensure-dispatch-macro-character (char &optional non-terminating-p
                                                        (readtable *readtable*))
   (unless (dispatch-macro-char-p char readtable)
     (make-dispatch-macro-character char non-terminating-p readtable)))
 
-(defun copy-named-readtable (named-readtable-designator)
+(define-api copy-named-readtable
+    (named-readtable-designator)
+    (named-readtable-designator => readtable)
   "Like COPY-READTABLE but takes a NAMED-READTABLE-DESIGNATOR as argument."
   (copy-readtable (ensure-readtable named-readtable-designator)))
 
-(defun list-all-named-readtables ()
+(define-api list-all-named-readtables () (=> list)
   "Returns a list of all registered readtables. The returned list is
 guaranteed to be fresh, but may contain duplicates."
   (mapcar #'ensure-readtable (%list-all-readtable-names)))
 
 
-(deftype readtable-designator ()
-  `(or null readtable))
-
-(deftype named-readtable-designator ()
-  "Either a symbol or a readtable itself."
-  `(or readtable-designator symbol))
-
-
 (define-condition readtable-error (error) ())
 
 (define-condition readtable-does-not-exist (readtable-error)
@@ -416,10 +419,11 @@ per EQ.)"))
 	((eq reserved-name :current)     *readtable*)
 	(t (error "Bug: no such reserved readtable: ~S" reserved-name))))
 
-(defun find-readtable (named-readtable-designator)
+(define-api find-readtable
+    (named-readtable-designator)
+    (named-readtable-designator => (or readtable null))
   "Looks for the readtable specified by `named-readtable-designator' and
 returns it if it is found. Returns NIL otherwise."
-  (check-type named-readtable-designator named-readtable-designator)
   (symbol-macrolet ((designator named-readtable-designator))
     (cond ((readtablep designator) designator)
 	  ((reserved-readtable-name-p designator)
@@ -431,7 +435,10 @@ returns it if it is found. Returns NIL otherwise."
 ;;; macros below.)
 (defsetf find-readtable register-readtable)
 
-(defun ensure-readtable (named-readtable-designator &optional (default nil default-p))
+(define-api ensure-readtable
+    (named-readtable-designator &optional (default nil default-p))
+    (named-readtable-designator &optional (or named-readtable-designator null)
+      => readtable)
   "Looks up the readtable specified by `named-readtable-designator' and
 returns it if it is found.  If it is not found, it registers the readtable
 designated by `default' under the name represented by
@@ -444,16 +451,18 @@ signals an error of type READTABLE-DOES-NOT-EXIST instead."
 	  (t (setf (find-readtable designator) (ensure-readtable default))))))
 
 
-(defun register-readtable (name readtable)
+(define-api register-readtable
+    (name readtable)
+    (symbol readtable => readtable)
   "Associate `readtable' with `name'. Returns the readtable."
-  (check-type name symbol)
-  (check-type readtable readtable)
-  (check-type name (not (satisfies reserved-readtable-name-p)))
+  (assert (typep name '(not (satisfies reserved-readtable-name-p))))
   (%associate-readtable-with-name name readtable)
   (%associate-name-with-readtable name readtable)
   readtable)
 
-(defun unregister-readtable (named-readtable-designator)
+(define-api unregister-readtable
+    (named-readtable-designator)
+    (named-readtable-designator => boolean)
   "Remove the association of `named-readtable-designator'. Returns T if
 successfull, NIL otherwise."
   (let* ((readtable (find-readtable named-readtable-designator))
@@ -465,11 +474,12 @@ successfull, NIL otherwise."
             (%unassociate-readtable-from-name readtable-name readtable)
             (%unassociate-name-from-readtable readtable-name readtable)))))
 
-(defun readtable-name (named-readtable-designator)
+(define-api readtable-name
+    (named-readtable-designator)
+    (named-readtable-designator => symbol)
   "Returns the name of the readtable designated by
 `named-readtable-designator', or NIL."
-  (check-type named-readtable-designator named-readtable-designator)
-  (let ((readtable (ensure-readtable named-readtable-designator)))
+   (let ((readtable (ensure-readtable named-readtable-designator)))
     (cond ((%readtable-name readtable))
           ((eq readtable *readtable*) :current)
 	  ((eq readtable *standard-readtable*) :common-lisp)

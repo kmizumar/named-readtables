@@ -8,7 +8,7 @@
                     (funcall cdr-fn (cdr entry))))
           alist))
 
-(defmacro signals-error-p (name &body body)
+(defmacro signals-condition-p (name &body body)
   `(handler-case (prog1 nil ,@body)
      (,(second name) () t)))
 
@@ -20,9 +20,6 @@
   (let ((*package* '#.*package*)
         (*readtable* (find-readtable name)))
     (values (read-from-string string))))
-
-(defun empty-readtable ()
-  (copy-readtable *empty-readtable*))
 
 (defun random-named-readtable ()
   (let ((readtables (list-all-named-readtables)))
@@ -123,13 +120,13 @@
 
 
 (deftest empty.1
-    (null (readtable-content (empty-readtable)))
+    (null (readtable-content (make-readtable)))
   t)
 
 (deftest empty.2
     (let ((rt (copy-readtable (find-readtable :standard))))
-      (readtable= (merge-readtables-into (empty-readtable) rt)
-                  (merge-readtables-into rt (empty-readtable))))
+      (readtable= (merge-readtables-into (make-readtable) rt)
+                  (merge-readtables-into rt (make-readtable))))
   t)
 
 
@@ -191,6 +188,11 @@
   #(:a :b :c))
 
 (deftest merge.4
+    (readtable= (merge-readtables-into (make-readtable) :standard)
+                (find-readtable :standard))
+  t)
+
+(deftest merge.5
     (let ((A+B+C+standard (merge-readtables-into (copy-named-readtable 'A+B+C)
                                                  :standard)))
       (readtable= 'standard+A+B+C A+B+C+standard))
@@ -210,39 +212,39 @@
 
 
 (deftest reader-macro-conflict.1
-    (signals-error-p 'reader-macro-conflict
-      (merge-readtables-into (empty-readtable) 'A 'A-as-X))
+    (signals-condition-p 'reader-macro-conflict
+      (merge-readtables-into (make-readtable) 'A 'A-as-X))
   t)
 
 (deftest reader-macro-conflict.2
-    (signals-error-p 'reader-macro-conflict
-      (merge-readtables-into (empty-readtable) :standard :standard))
+    (signals-condition-p 'reader-macro-conflict
+      (merge-readtables-into (make-readtable) :standard :standard))
   nil)
 
 (deftest reader-macro-conflict.3
-    (signals-error-p 'reader-macro-conflict
-      (merge-readtables-into (empty-readtable) 'A+B+C 'A))
+    (signals-condition-p 'reader-macro-conflict
+      (merge-readtables-into (make-readtable) 'A+B+C 'A))
   nil)
 
 (deftest reader-macro-conflict.4
-    (signals-error-p 'reader-macro-conflict
-      (merge-readtables-into (empty-readtable) :standard 'sharp-paren))
+    (signals-condition-p 'reader-macro-conflict
+      (merge-readtables-into (make-readtable) :standard 'sharp-paren))
   t)
 
 
 (deftest readtable-does-not-exist.1
-    (signals-error-p 'readtable-does-not-exist
+    (signals-condition-p 'readtable-does-not-exist
       (ensure-readtable 'does-not-exist))
   t)
 
 
 (deftest readtable-does-already-exist.1
-    (signals-error-p 'readtable-does-already-exist
+    (signals-condition-p 'readtable-does-already-exist
       (make-readtable 'A))
   t)
 
 (deftest readtable-does-already-exist.2
-    (signals-error-p 'readtable-does-already-exist
+    (signals-condition-p 'readtable-does-already-exist
       (make-readtable 'A))
   t)
 
@@ -257,3 +259,19 @@
                                 "(A B C)")
         (unregister-readtable 'does-not-exist)))
     (:a B :c))
+
+
+(deftest defreadtable.1
+    (unwind-protect
+         (signals-condition-p 'reader-macro-conflict
+           (eval `(defreadtable does-not-exist (:merge A A-as-X))))
+      (unregister-readtable 'does-not-exist))
+  t)
+
+(deftest defreadtable.2
+    (unwind-protect
+         (signals-condition-p 't
+           (eval `(defreadtable does-not-exist (:fuze A A-as-X))))
+      (unregister-readtable 'does-not-exist))
+  nil)
+

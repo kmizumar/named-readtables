@@ -17,13 +17,6 @@
 ;;;                               (X3J13 Cleanup Issue IN-SYNTAX)
 ;;;
 
-
-;;; TODO:
-;;;
-;;;    * Add :FUZE that's like :MERGE without the style-warnings
-;;;
-;;;    * Think about MAKE-DISPATCHING-MACRO-CHARACTER in DEFREADTABLE
-
 ;;;;;; DEFREADTABLE &c.
 
 (defmacro defreadtable (name &body options)
@@ -38,13 +31,17 @@ The readtable can be populated using the following `options':
       Merge the readtables designated into the new readtable being defined
       as per MERGE-READTABLES-INTO.
 
-      Error conditions of type READER-MACRO-CONFLICT that are signaled
-      during the merge operation are continued and warnings are signaled
-      instead. It follows that reader macros in earlier entries will be
-      _overwritten_ by later ones.
-
       If no :MERGE clause is given, an empty readtable is used. See
       MAKE-READTABLE.
+
+  (:FUZE `readtable-designators'+)
+
+      Like :MERGE except:
+
+      Error conditions of type READER-MACRO-CONFLICT that are signaled
+      during the merge operation will be silently _continued_. It follows
+      that reader macros in earlier entries will be overwritten by later
+      ones.
 
   (:DISPATCH-MACRO-CHAR `macro-char' `sub-char' `function')
 
@@ -56,8 +53,8 @@ The readtable can be populated using the following `options':
   (:MACRO-CHAR `macro-char' `function' [`non-terminating-p'])
 
       Define a new macro character in the readtable, per SET-MACRO-CHARACTER.
-      If `function' is the keyword :DISPATCH, `macro-char' is made a dispatching
-      macro character, per MAKE-DISPATCH-MACRO-CHARACTER.
+      If `function' is the keyword :DISPATCH, `macro-char' is made a
+      dispatching macro character, per MAKE-DISPATCH-MACRO-CHARACTER.
 
   (:SYNTAX-FROM `from-readtable-designator' `from-char' `to-char')
 
@@ -71,8 +68,8 @@ The readtable can be populated using the following `options':
 Any number of option clauses may appear. The options are grouped by their
 type, but in each group the order the options appeared textually is
 preserved.  The following groups exist and are executed in the following
-order: :MERGE, :CASE, :MACRO-CHAR and :DISPATCH-MACRO-CHAR (one group),
-finally :SYNTAX-FROM.
+order: :MERGE and :FUZE (one group), :CASE, :MACRO-CHAR
+and :DISPATCH-MACRO-CHAR (one group), finally :SYNTAX-FROM.
 
 Notes:
 
@@ -96,6 +93,10 @@ Notes:
              ((:merge &rest readtable-designators)
 	      `(merge-readtables-into ,var
                  ,@(mapcar #'(lambda (x) `',x) readtable-designators))) ; quotify
+             ((:fuze &rest readtable-designators)
+	      `(handler-bind ((reader-macro-conflict #'continue))
+                 (merge-readtables-into ,var
+                   ,@(mapcar #'(lambda (x) `',x) readtable-designators))))
              ((:dispatch-macro-char disp-char sub-char function)
               `(set-dispatch-macro-character ,disp-char ,sub-char ,function ,var))
              ((:macro-char char function &optional non-terminating-p)
@@ -111,7 +112,7 @@ Notes:
 	   (setq clauses (if (listp clauses) clauses (list clauses)))
 	   (remove-if-not #'(lambda (x) (member x clauses)) 
 			  options :key #'first)))
-    (let* ((merge-clauses  (remove-clauses :merge options))
+    (let* ((merge-clauses  (remove-clauses '(:merge :fuze) options))
 	   (case-clauses   (remove-clauses :case  options))
 	   (macro-clauses  (remove-clauses '(:macro-char :dispatch-macro-char)
 					   options))
@@ -124,34 +125,25 @@ Notes:
 	 (error "Bogus DEFREADTABLE clauses: ~/PPRINT-LINEAR/" other-clauses))
 	(t
 	 `(eval-when (:load-toplevel :execute)
-	    (handler-bind ((reader-macro-conflict
-                            #'(lambda (c)
-                                (warn "~@<Overwriting ~C~@[~C~] in ~A ~
-                                          with entry from ~A.~@:>"
-                                      (conflicting-macro-char c)
-                                      (conflicting-dispatch-sub-char c)
-                                      (to-readtable c)
-                                      (from-readtable c))
-                                (continue c))))
-	      ;; The (FIND-READTABLE ...) is important for proper
-	      ;; redefinition semantics, as redefining has to modify the
-	      ;; already existing readtable object.
-	      (let ((readtable (find-readtable ',name)))
-                (cond ((not readtable)
-                       (setq readtable (make-readtable ',name)))
-                      (t
-                       (setq readtable (%clear-readtable readtable))
-                       (simple-style-warn "Overwriting already existing readtable ~S."
-                                          readtable)))
-		,@(loop for option in merge-clauses
-			collect (process-option option 'readtable))
-		,@(loop for option in case-clauses
-			collect (process-option option 'readtable))
-		,@(loop for option in macro-clauses
-			collect (process-option option 'readtable))
-		,@(loop for option in syntax-clauses
-			collect (process-option option 'readtable))
-		readtable))))))))
+            ;; The (FIND-READTABLE ...) isqrt important for proper
+            ;; redefinition semantics, as redefining has to modify the
+            ;; already existing readtable object.
+            (let ((readtable (find-readtable ',name)))
+              (cond ((not readtable)
+                     (setq readtable (make-readtable ',name)))
+                    (t
+                     (setq readtable (%clear-readtable readtable))
+                     (simple-style-warn "Overwriting already existing readtable ~S."
+                                        readtable)))
+              ,@(loop for option in merge-clauses
+                      collect (process-option option 'readtable))
+              ,@(loop for option in case-clauses
+                      collect (process-option option 'readtable))
+              ,@(loop for option in macro-clauses
+                      collect (process-option option 'readtable))
+              ,@(loop for option in syntax-clauses
+                      collect (process-option option 'readtable))
+              readtable)))))))
 
 (defmacro in-readtable (name)
   "Set *READTABLE* to the readtable referred to by the symbol `name'."
@@ -192,8 +184,8 @@ Notes:
 (declaim (special *standard-readtable* *empty-readtable*))
 
 (define-api make-readtable
-    (name &key merge)
-    (named-readtable-designator &key (:merge list) => readtable)
+    (&optional (name nil name-supplied-p) &key merge)
+    (&optional named-readtable-designator &key (:merge list) => readtable)
   "Creates and returns a new readtable under the specified `name'.
 
 `merge' takes a list of NAMED-READTABLE-DESIGNATORS and specifies the
@@ -204,7 +196,9 @@ used instead.
 An empty readtable is a readtable where the character syntax of each
 character is like in the /standard readtable/ except that each
 standard macro character has been made a constituent."
-  (cond ((reserved-readtable-name-p name)
+  (cond ((not name-supplied-p)
+         (copy-readtable *empty-readtable*))
+        ((reserved-readtable-name-p name)
          (error "~A is the designator for a predefined readtable. ~
                    Not acceptable as a user-specified readtable name." name))
         ((let ((rt (find-readtable name)))
@@ -226,16 +220,15 @@ standard macro character has been made a constituent."
              (register-readtable name result)))))
 
 (define-api rename-readtable
-    (named-readtable-designator new-name)
+    (old-name new-name)
     (named-readtable-designator symbol => readtable)
-  "Replaces the associated name of the readtable designated by
-`named-readtable-designator' with `new-name'. If a readtable is already
-registered under `new-name', an error of type READTABLE-DOES-ALREADY-EXIST
-is signaled."
+  "Replaces the associated name of the readtable designated by `old-name'
+with `new-name'. If a readtable is already registered under `new-name', an
+error of type READTABLE-DOES-ALREADY-EXIST is signaled."
   (when (find-readtable new-name)
     (cerror "Overwrite existing entry." 
             'readtable-does-already-exist :readtable-name new-name))
-  (let* ((readtable (ensure-readtable named-readtable-designator))
+  (let* ((readtable (ensure-readtable old-name))
 	 (readtable-name (readtable-name readtable)))
     ;; We use the internal functions directly to omit repeated
     ;; type-checking.
@@ -246,10 +239,10 @@ is signaled."
     readtable))
 
 (define-api merge-readtables-into
-    (result-readtable &rest named-readtable-designators)
+    (result-readtable &rest named-readtables)
     (named-readtable-designator &rest named-readtable-designator => readtable)
-  "Copy the contents of each readtable in `named-readtable-designators'
-into `result-table'.
+  "Copy the contents of each readtable in `named-readtables' into
+`result-table'.
 
 If a macro character appears in more than one of the readtables, i.e. if a
 conflict is discovered during the merge, an error of type
@@ -266,7 +259,7 @@ READER-MACRO-CONFLICT is signaled."
                       (set-dispatch-macro-character char subchar subfn to)))))
 	   to))
     (let ((result-table (ensure-readtable result-readtable)))
-      (dolist (table (mapcar #'ensure-readtable named-readtable-designators))
+      (dolist (table (mapcar #'ensure-readtable named-readtables))
         (merge-into result-table table))
       result-table)))
 
@@ -276,10 +269,10 @@ READER-MACRO-CONFLICT is signaled."
     (make-dispatch-macro-character char non-terminating-p readtable)))
 
 (define-api copy-named-readtable
-    (named-readtable-designator)
+    (named-readtable)
     (named-readtable-designator => readtable)
   "Like COPY-READTABLE but takes a NAMED-READTABLE-DESIGNATOR as argument."
-  (copy-readtable (ensure-readtable named-readtable-designator)))
+  (copy-readtable (ensure-readtable named-readtable)))
 
 (define-api list-all-named-readtables () (=> list)
   "Returns a list of all registered readtables. The returned list is
@@ -344,8 +337,7 @@ guaranteed to be fresh, but may contain duplicates."
 This condition is signaled during the merge process if a) a reader macro
 \(be it a macro character or the sub character of a dispatch macro
 character\) is both present in the source as well as the target readtable,
-and b) if and only if the two respective reader macro functions differ (as
-per EQ.)"))
+and b) if and only if the two respective reader macro functions differ."))
 
 
 (defun check-reader-macro-conflict (from to char &optional subchar)
@@ -420,15 +412,14 @@ per EQ.)"))
 	(t (error "Bug: no such reserved readtable: ~S" reserved-name))))
 
 (define-api find-readtable
-    (named-readtable-designator)
+    (name)
     (named-readtable-designator => (or readtable null))
-  "Looks for the readtable specified by `named-readtable-designator' and
-returns it if it is found. Returns NIL otherwise."
-  (symbol-macrolet ((designator named-readtable-designator))
-    (cond ((readtablep designator) designator)
-	  ((reserved-readtable-name-p designator)
-	   (find-reserved-readtable designator))
-	  ((%find-readtable designator)))))
+  "Looks for the readtable specified by `name' and returns it if it is
+found. Returns NIL otherwise."
+  (cond ((readtablep name) name)
+        ((reserved-readtable-name-p name)
+         (find-reserved-readtable name))
+        ((%find-readtable name))))
 
 ;;; FIXME: This doesn't take a NAMED-READTABLE-DESIGNATOR, but only a
 ;;; STRING-DESIGNATOR. (When fixing, heed interplay with compiler
@@ -436,19 +427,17 @@ returns it if it is found. Returns NIL otherwise."
 (defsetf find-readtable register-readtable)
 
 (define-api ensure-readtable
-    (named-readtable-designator &optional (default nil default-p))
+    (name &optional (default nil default-p))
     (named-readtable-designator &optional (or named-readtable-designator null)
       => readtable)
-  "Looks up the readtable specified by `named-readtable-designator' and
-returns it if it is found.  If it is not found, it registers the readtable
-designated by `default' under the name represented by
-`named-readtable-designator'; or if no default argument is given, it
-signals an error of type READTABLE-DOES-NOT-EXIST instead."
-  (symbol-macrolet ((designator named-readtable-designator))
-    (cond ((find-readtable designator))
-	  ((not default-p)
-	   (error 'readtable-does-not-exist :readtable-name designator))
-	  (t (setf (find-readtable designator) (ensure-readtable default))))))
+  "Looks up the readtable specified by `name' and returns it if it's found.
+If it is not found, it registers the readtable designated by `default'
+under the name represented by `name'; or if no default argument is given,
+it signals an error of type READTABLE-DOES-NOT-EXIST instead."
+  (cond ((find-readtable name))
+        ((not default-p)
+         (error 'readtable-does-not-exist :readtable-name name))
+        (t (setf (find-readtable name) (ensure-readtable default)))))
 
 
 (define-api register-readtable
@@ -461,11 +450,11 @@ signals an error of type READTABLE-DOES-NOT-EXIST instead."
   readtable)
 
 (define-api unregister-readtable
-    (named-readtable-designator)
+    (named-readtable)
     (named-readtable-designator => boolean)
-  "Remove the association of `named-readtable-designator'. Returns T if
-successfull, NIL otherwise."
-  (let* ((readtable (find-readtable named-readtable-designator))
+  "Remove the association of `named-readtable'. Returns T if successfull,
+NIL otherwise."
+  (let* ((readtable (find-readtable named-readtable))
 	 (readtable-name (and readtable (readtable-name readtable))))
     (if (not readtable-name)
 	nil
@@ -475,11 +464,11 @@ successfull, NIL otherwise."
             (%unassociate-name-from-readtable readtable-name readtable)))))
 
 (define-api readtable-name
-    (named-readtable-designator)
+    (named-readtable)
     (named-readtable-designator => symbol)
-  "Returns the name of the readtable designated by
-`named-readtable-designator', or NIL."
-   (let ((readtable (ensure-readtable named-readtable-designator)))
+  "Returns the name of the readtable designated by `named-readtable', or
+NIL."
+   (let ((readtable (ensure-readtable named-readtable)))
     (cond ((%readtable-name readtable))
           ((eq readtable *readtable*) :current)
 	  ((eq readtable *standard-readtable*) :common-lisp)

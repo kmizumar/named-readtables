@@ -186,8 +186,8 @@
   Thanks to Robert Goldman for making me want to write this library.
 
   Thanks to Stephen Compall, Ariel Badichi, David Lichteblau, Bart
-  Botta and David Crawford for being early adopters, providing
-  comments and bugfixes.
+  Botta, David Crawford, and Pascal Costanza for being early adopters,
+  providing comments and bugfixes.
 "))
 
 (pushnew :named-readtables *features*)

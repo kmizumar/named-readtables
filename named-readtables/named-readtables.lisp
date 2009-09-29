@@ -189,13 +189,19 @@ Notes:
   "Creates and returns a new readtable under the specified `name'.
 
 `merge' takes a list of NAMED-READTABLE-DESIGNATORS and specifies the
-readtables the new readtable is created from. (See the :MERGE clause
-of DEFREADTABLE for details.) If `merge' is NIL, an empty readtable is
-used instead.
+readtables the new readtable is created from. (See the :MERGE clause of
+DEFREADTABLE for details.)
 
-An empty readtable is a readtable where the character syntax of each
-character is like in the /standard readtable/ except that each
-standard macro character has been made a constituent."
+If `merge' is NIL, an empty readtable is used instead.
+
+If `name' is not given, an anonymous empty readtable is returned.
+
+Notes:
+
+  An empty readtable is a readtable where each character's syntax is the
+  same as in the /standard readtable/ except that each macro character has
+  been made a constituent. Basically: whitespace stays whitespace,
+  everything else is constituent."
   (cond ((not name-supplied-p)
          (copy-readtable *empty-readtable*))
         ((reserved-readtable-name-p name)
@@ -255,8 +261,8 @@ READER-MACRO-CONFLICT is signaled."
                    (t
                     (ensure-dispatch-macro-character char non-terminating-p to)
                     (loop for (subchar . subfn) in table do
-                      (check-reader-macro-conflict from to char subchar)
-                      (set-dispatch-macro-character char subchar subfn to)))))
+                          (check-reader-macro-conflict from to char subchar)
+                          (set-dispatch-macro-character char subchar subfn to)))))
 	   to))
     (let ((result-table (ensure-readtable result-readtable)))
       (dolist (table (mapcar #'ensure-readtable named-readtables))
@@ -265,8 +271,9 @@ READER-MACRO-CONFLICT is signaled."
 
 (defun ensure-dispatch-macro-character (char &optional non-terminating-p
                                                        (readtable *readtable*))
-  (unless (dispatch-macro-char-p char readtable)
-    (make-dispatch-macro-character char non-terminating-p readtable)))
+  (if (dispatch-macro-char-p char readtable)
+      t
+      (make-dispatch-macro-character char non-terminating-p readtable)))
 
 (define-api copy-named-readtable
     (named-readtable)
@@ -339,28 +346,21 @@ This condition is signaled during the merge process if a) a reader macro
 character\) is both present in the source as well as the target readtable,
 and b) if and only if the two respective reader macro functions differ."))
 
-
 (defun check-reader-macro-conflict (from to char &optional subchar)
   (flet ((conflictp (from-fn to-fn)
+           (assert from-fn) ; if this fails, there's a bug in readtable iterators.
            (and to-fn (not (function= to-fn from-fn)))))
     (when (if subchar
-              (conflictp (safe-get-dispatch-macro-character char subchar from)
-                         (safe-get-dispatch-macro-character char subchar to))
-              (conflictp (get-macro-character char from)
-                         (get-macro-character char to)))
+              (conflictp (%get-dispatch-macro-character char subchar from)
+                         (%get-dispatch-macro-character char subchar to))
+              (conflictp (%get-macro-character char from)
+                         (%get-macro-character char to)))
       (cerror (format nil "Overwrite ~@C in ~A." char to)
               'reader-macro-conflict
               :from-readtable from
               :to-readtable to
               :macro-char char
               :sub-char subchar))))
-
-;;; See Ticket 601. This is supposed to be removed at some point in
-;;; the future.
-(defun safe-get-dispatch-macro-character (char subchar rt)
-  #+ccl (ignore-errors
-         (get-dispatch-macro-character char subchar rt))
-  #-ccl (get-dispatch-macro-character char subchar rt))
 
 
 ;;; Although there is no way to get at the standard readtable in

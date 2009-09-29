@@ -108,7 +108,7 @@
 
 ;;; CCL has a bug that prevents the portable form below from working
 ;;; (Ticket 601). CLISP will incorrectly fold the call to G-D-M-C away
-;;; if not declared inline..
+;;; if not declared inline.
 (define-cruft dispatch-macro-char-p (char rt)
   "Is CHAR a dispatch macro character in RT?"
   #+ :ccl
@@ -123,14 +123,8 @@
     (error () nil)))
 
 ;; (defun macro-char-p (char rt)
-;;   (let ((reader-fn (get-macro-character char rt)))
-;;     (and reader-fn
-;;          ;; Allegro stores READ-TOKEN as reader macro function of each
-;;          ;; constituent character.
-;;          #+allegro
-;;          (let ((read-token-fn
-;;                 (load-time-value (get-macro-character #\A *standard-readtable*))))
-;;            (not (eq reader-fn read-token-fn))))))
+;;   (let ((reader-fn (%get-macro-character char rt)))
+;;     (and reader-fn t)))
 
 ;; (defun standard-macro-char-p (char rt)
 ;;   (multiple-value-bind (rt-fn rt-flag) (get-macro-character char rt)
@@ -161,31 +155,33 @@
         (dispatch-tables  (sb-impl::dispatch-tables readtable))
         (char-code 0))
     (with-hash-table-iterator (ht-iterator char-macro-ht)
-      (labels ((grovel1 ()		; grovel base macro characters
+      (labels ((grovel-base-chars ()
                  (declare (optimize sb-c::merge-tail-calls))
                  (if (>= char-code sb-int:base-char-code-limit)
-                     (grovel2)
-                     (let ((entry (svref char-macro-array char-code)))
-                       (setq char-code (1+ char-code))
-                       (if entry
-                           (values t (code-char (1- char-code)) entry nil nil)
-                           (grovel1)))))
-               (grovel2 ()	     ; grovel unicode macro characters
+                     (grovel-unicode-chars)
+                     (let ((reader-fn (svref char-macro-array char-code))
+                           (char      (code-char (shiftf char-code (1+ char-code)))))
+                       (if reader-fn
+                           (yield char reader-fn)
+                           (grovel-base-chars)))))
+               (grovel-unicode-chars ()
                  (multiple-value-bind (more? char reader-fn) (ht-iterator)
                    (if (not more?)
-                       (grovel3)
-                       (values t char reader-fn nil nil))))
-               (grovel3 ()	    ; grovel dispatch macro characters
-                 (if (null dispatch-tables)
-                     (values nil nil nil nil nil)
-                     (let* ((disp-ch (caar dispatch-tables))
-                            (disp-ht (cdar dispatch-tables))
-                            (disp-fn (get-macro-character disp-ch readtable))
-                            (sub-char-alist))
-                       (setq dispatch-tables (cdr dispatch-tables))
-                       (maphash (lambda (k v) (push (cons k v) sub-char-alist)) disp-ht)
-                       (values t disp-ch disp-fn t sub-char-alist)))))
-        #'grovel1))))
+                       (values nil nil nil nil nil)
+                       (yield char reader-fn))))
+               (yield (char reader-fn)
+                 (let ((disp-ht))
+                   (cond
+                     ((setq disp-ht (cdr (assoc char dispatch-tables)))
+                      (let* ((disp-fn (get-macro-character char readtable))
+                             (sub-char-alist))
+                        (maphash (lambda (k v)
+                                   (push (cons k v) sub-char-alist))
+                                 disp-ht)
+                        (values t char disp-fn t sub-char-alist)))
+                     (t
+                      (values t char reader-fn nil nil))))))
+        #'grovel-base-chars))))
 
 #+clozure
 (defun %make-readtable-iterator (readtable)
@@ -203,39 +199,42 @@
 (defun %make-readtable-iterator (readtable)
   (declare (optimize speed))            ; for TCO
   (check-type readtable readtable)
-  (let* ((+macro-attr+ 1)               ; discovered through "reverse-engineering"
-         (attribute-table (first (excl::readtable-attribute-table readtable)))
-         (macro-table     (first (excl::readtable-macro-table readtable)))
+  (let* ((macro-table     (first (excl::readtable-macro-table readtable)))
          (dispatch-tables (excl::readtable-dispatch-tables readtable))
-         (table-length    (length attribute-table))
+         (table-length    (length macro-table))
          (idx 0))
-    (assert (= table-length (length macro-table)))
     (labels ((grovel-macro-chars ()
                (if (>= idx table-length)
                    (grovel-dispatch-chars)
-                   (let ((attr (svref attribute-table idx))
+                   (let ((read-fn (svref macro-table idx))
 			 (oidx idx))
                      (incf idx)
-                     (if (= attr +macro-attr+)
-                         (values t (code-char oidx) (svref macro-table oidx) nil nil)
-                         (grovel-macro-chars)))))
+                     (if (or (eq read-fn #'excl::read-token)
+                             (eq read-fn #'excl::read-dispatch-char)
+                             (eq read-fn #'excl::undefined-macro-char))
+                         (grovel-macro-chars)
+                         (values t (code-char oidx) read-fn nil nil)))))
              (grovel-dispatch-chars ()
                (if (null dispatch-tables)
                    (values nil nil nil nil nil)
                    (destructuring-bind (disp-char sub-char-table)
                        (first dispatch-tables)
                      (setf dispatch-tables (rest dispatch-tables))
-                     (values t
-                             disp-char
-                             (svref macro-table (char-code disp-char))
-                             t
-                             (loop for subch-fn   across sub-char-table
-                                   for subch-code from 0
-                                   when subch-fn
-                                     collect (cons (code-char subch-code)
-                                                   subch-fn)))))))
-      #'grovel-macro-chars)
-    ))
+                     ;;; Kludge. We can't fully clear dispatch tables
+                     ;;; in %CLEAR-READTABLE.
+                     (when (eq (svref macro-table (char-code disp-char))
+                               #'excl::read-dispatch-char)
+                       (values t
+                               disp-char
+                               (svref macro-table (char-code disp-char))
+                               t
+                               (loop for subch-fn   across sub-char-table
+                                     for subch-code from 0
+                                     when subch-fn
+                                       collect (cons (code-char subch-code)
+                                                     subch-fn))))))))
+      #'grovel-macro-chars)))
+
 
 #-(or sbcl clozure allegro)
 (eval-when (:compile-toplevel)
@@ -305,8 +304,6 @@
 
 ;;;; Misc
 
-(declaim (special *standard-readtable*))
-
 ;;; This should return an implementation's actual standard readtable
 ;;; object only if the implementation makes the effort to guard against
 ;;; modification of that object. Otherwise it should better return a
@@ -316,16 +313,47 @@
   #+ :sbcl+safe-standard-readtable sb-impl::*standard-readtable*
   #+ :common-lisp                  (copy-readtable nil))
 
-;;; FIXME: Alas, on SBCL, SET-SYNTAX-FROM-CHAR does not get rid of a
+;;; On SBCL, SET-SYNTAX-FROM-CHAR does not get rid of a
 ;;; readtable's dispatch table properly.
+;;; Same goes for Allegro but that does not seem to provide a
+;;; setter for their readtable's dispatch tables. Hence this ugly
+;;; workaround.
 (define-cruft %clear-readtable (readtable)
-  "Make all macro characters in READTABLE be consituents."
-  #+ :common-lisp
-  (progn
+  "Make all macro characters in READTABLE be constituents."
+  #+ :sbcl
+  (prog1 readtable
     (do-readtable (char readtable)
-      (set-syntax-from-char char #\A readtable *standard-readtable*))
-    #+sbcl (setf (sb-impl::dispatch-tables readtable) nil)
-    readtable))
+      (set-syntax-from-char char #\A readtable))
+    (setf (sb-impl::dispatch-tables readtable) nil))
+  #+ :allegro
+  (prog1 readtable
+    (do-readtable (char readtable)
+      (set-syntax-from-char char #\A readtable))
+    (let ((dispatch-tables (excl::readtable-dispatch-tables readtable)))
+      (setf (cdr   dispatch-tables) nil)
+      (setf (caar  dispatch-tables) #\Backspace)
+      (setf (cadar dispatch-tables) (fill (cadar dispatch-tables) nil))))
+  #+ :common-lisp
+  (do-readtable (char readtable readtable)
+    (set-syntax-from-char char #\A readtable)))
+
+;;; See Clozure Trac Ticket 601. This is supposed to be removed at
+;;; some point in the future.
+(define-cruft %get-dispatch-macro-character (char subchar rt)
+  "Ensure ANSI behaviour for GET-DISPATCH-MACRO-CHARACTER."
+  #+ :ccl         (ignore-errors 
+                    (get-dispatch-macro-character char subchar rt))
+  #+ :common-lisp (get-dispatch-macro-character char subchar rt))
+
+;;; Allegro stores READ-TOKEN as reader macro function of each
+;;; constituent character.
+(define-cruft %get-macro-character (char rt)
+  "Ensure ANSI behaviour for GET-MACRO-CHARACTER."
+  #+ :allegro     (let ((fn (get-macro-character char rt)))
+                    (cond ((not fn) nil)
+                          ((function= fn #'excl::read-token) nil)
+                          (t fn)))
+  #+ :common-lisp (get-macro-character char rt))
 
 
 ;;;; Specialized PRINT-OBJECT for named readtables.

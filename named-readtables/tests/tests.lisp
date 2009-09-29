@@ -8,6 +8,9 @@
                     (funcall cdr-fn (cdr entry))))
           alist))
 
+(defun length=1 (list)
+  (and list (null (cdr list))))
+
 (defmacro signals-condition-p (name &body body)
   `(handler-case (prog1 nil ,@body)
      (,(second name) () t)))
@@ -98,6 +101,48 @@
                (get-macro-character #\" (copy-readtable nil)))
   t)
 
+(deftest cruft.2
+    (dispatch-macro-char-p #\# (find-readtable :standard))
+  t)
+
+(deftest cruft.3
+    (dispatch-macro-char-p #\# (make-readtable))
+  nil)
+
+(deftest cruft.4
+    (let ((rt (copy-named-readtable :standard)))
+      (ensure-dispatch-macro-character #\# t rt)
+      (dispatch-macro-char-p #\# rt))
+  t)
+
+(deftest cruft.5
+    (let ((rt (make-readtable)))
+      (values
+        (dispatch-macro-char-p #\$ rt)
+        (ensure-dispatch-macro-character #\$ t rt)
+        (dispatch-macro-char-p #\$ rt)))
+  nil t t)
+
+(deftest cruft.6
+    (let ((rt (make-readtable))
+          (fn (constantly nil)))
+      (ensure-dispatch-macro-character #\$ t rt)
+      (set-dispatch-macro-character #\$ #\# fn rt)
+      (values 
+        (eq fn (get-dispatch-macro-character #\$ #\# rt))
+        (length=1 (readtable-content rt))))
+  t t)
+
+(deftest cruft.7
+    (let ((rt (make-readtable))
+          (fn (constantly nil)))
+      (set-macro-character #\$ fn t rt)
+      (values
+        (eq fn (get-macro-character #\$ rt))
+        (length=1 (readtable-content rt))))
+  t t)
+
+
 (deftest standard.1
     (read-with-readtable :standard "ABC")
   ABC)
@@ -124,7 +169,12 @@
   t)
 
 (deftest empty.2
-    (let ((rt (copy-readtable (find-readtable :standard))))
+    (readtable= (merge-readtables-into (make-readtable) :standard)
+                (find-readtable :standard))
+  t)
+
+(deftest empty.3
+    (let ((rt (copy-named-readtable :standard)))
       (readtable= (merge-readtables-into (make-readtable) rt)
                   (merge-readtables-into rt (make-readtable))))
   t)
@@ -188,11 +238,6 @@
   #(:a :b :c))
 
 (deftest merge.4
-    (readtable= (merge-readtables-into (make-readtable) :standard)
-                (find-readtable :standard))
-  t)
-
-(deftest merge.5
     (let ((A+B+C+standard (merge-readtables-into (copy-named-readtable 'A+B+C)
                                                  :standard)))
       (readtable= 'standard+A+B+C A+B+C+standard))

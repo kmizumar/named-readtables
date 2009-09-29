@@ -5,7 +5,8 @@
 (defpackage :named-readtables-test
   (:use :cl :named-readtables)
   (:import-from :named-readtables
-     #:*empty-readtable*
+     #:dispatch-macro-char-p
      #:do-readtable
      #:ensure-function
+     #:ensure-dispatch-macro-character
      #:function=))

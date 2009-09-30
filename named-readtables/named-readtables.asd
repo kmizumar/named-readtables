@@ -31,7 +31,7 @@
 
 
 (asdf:defsystem :named-readtables-test
-  :description "Test suite for Named-Readtables library."
+  :description "Test suite for the Named-Readtables library."
   :author "Tobias C. Rittweiler <trittweiler@common-lisp.net>"
   :depends-on (:named-readtables)
   :components

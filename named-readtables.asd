@@ -53,5 +53,5 @@
 ;;  :named-readtables
 ;;  :target "/home/tcr/src/contributing/named-readtables/doc/named-readtables.html"
 ;;  :version (asdf:component-version (asdf:find-system :named-readtables))
-;;  :repository "darcs get http://common-lisp.net/project/editor-hints/darcs/named-readtables/"
+;;  :repository "http://common-lisp.net/project/editor-hints/darcs/named-readtables/"
 ;;  :download-url "http://common-lisp.net/project/editor-hints/releases/named-readtables-0.9.tar.gz")

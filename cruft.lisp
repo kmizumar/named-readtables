@@ -85,7 +85,7 @@
 
 (define-cruft %find-readtable (name)
   "Return the readtable named NAME."
-  #+ :allegro     (excl:named-readtable (readtable-name-for-allegro name))
+  #+ :allegro     (excl:named-readtable (readtable-name-for-allegro name) nil)
   #+ :common-lisp (values (gethash name *named-readtables* nil)))
 
 
